@@ -24,7 +24,11 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 export type TutorMessageResponse = {
   reply: string;
   suggestedGoal: string;
-  source?: "openai" | "fallback";
+  correction?: string | null;
+  exercise?: string | null;
+  phase?: "setup" | "practice";
+  source?: "openai" | "gemini" | "groq" | "fallback";
+  warning?: string;
 };
 
 export async function postTutorMessage(
