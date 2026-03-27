@@ -87,7 +87,7 @@ export function PlannerScreen() {
               >
                 <View style={styles.dayLeft}>
                   <Text style={styles.dayIcon}>{DAY_ICON[item.day]}</Text>
-                  <View>
+                  <View style={styles.dayTextBlock}>
                     <Text style={[styles.dayName, isToday && styles.dayNameToday]}>
                       {DAY_ES[item.day]}{isToday ? "  ← hoy" : ""}
                     </Text>
@@ -171,11 +171,12 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   dayRowToday: { borderColor: theme.colors.accent, backgroundColor: "#f0f8fa" },
-  dayLeft: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
+  dayLeft: { flexDirection: "row", gap: 10, alignItems: "flex-start", flex: 1 },
   dayIcon: { fontSize: 22, marginTop: 1 },
+  dayTextBlock: { flex: 1 },
   dayName: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
   dayNameToday: { color: theme.colors.accent },
-  dayObjective: { color: theme.colors.text, fontSize: 14, lineHeight: 20, marginTop: 2 },
+  dayObjective: { color: theme.colors.text, fontSize: 14, lineHeight: 20, marginTop: 2, flexShrink: 1 },
   weaknessCard: {
     backgroundColor: theme.colors.panel,
     borderRadius: 16,

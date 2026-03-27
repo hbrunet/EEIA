@@ -65,19 +65,19 @@ export function buildDailyLesson(progress: AppProgress): LessonPlan {
   const topWeakness = weaknesses[0]?.detail || progress.nextClassGoal;
 
   return {
-    objective: progress.nextClassGoal || `Reinforce ${topWeakness}`,
+    objective: progress.nextClassGoal || `Reforzar: ${topWeakness}`,
     focusArea,
     accentFocus,
     warmupQuestions: [
-      "What situation this week made English difficult for you?",
-      "Can you describe yesterday using full sentences?",
-      "What would you like to say more naturally at work?",
+      "¿Qué situación esta semana te resultó difícil en inglés?",
+      "Describí lo que hiciste ayer usando oraciones completas en inglés.",
+      "¿Qué frase o expresión te gustaría decir con más naturalidad?",
     ],
     activities: [
-      `Guided dialogue focused on ${topWeakness}`,
-      "Correction cycle: error, fix, rule, one new example",
-      `${accentFocus} listening drill with comprehension check`,
-      "Free speaking wrap-up with feedback",
+      `Diálogo guiado enfocado en: ${topWeakness}`,
+      "Ciclo de corrección: error → forma correcta → regla → ejemplo nuevo",
+      `Ejercicio de escucha con acento ${accentFocus} y comprensión`,
+      "Conversación libre de cierre con devolución del tutor",
     ],
   };
 }
@@ -88,11 +88,11 @@ export function buildWeeklyPlan(progress: AppProgress): WeeklyPlanItem[] {
   const accent = chooseAccent(progress);
 
   return [
-    { day: "Mon", objective: `Grammar repair: ${main}` },
-    { day: "Tue", objective: "Guided conversation in real-life context" },
-    { day: "Wed", objective: `${accent} accent listening and shadowing` },
-    { day: "Thu", objective: "Pronunciation and fluency under time pressure" },
-    { day: "Fri", objective: "Mixed simulation and weekly review" },
+    { day: "Mon", objective: `Corrección gramatical: ${main}` },
+    { day: "Tue", objective: "Conversación guiada en contexto real" },
+    { day: "Wed", objective: `Escucha y shadowing con acento ${accent}` },
+    { day: "Thu", objective: "Pronunciación y fluidez bajo presión de tiempo" },
+    { day: "Fri", objective: "Simulación mixta y repaso semanal" },
   ];
 }
 
