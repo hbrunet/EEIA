@@ -28,12 +28,12 @@ export function inferWeaknesses(progress: AppProgress): Weakness[] {
   );
 
   const computed: Weakness[] = [
-    weaknessFromMetric("grammar", "Sentence accuracy under pressure", progress.metrics.grammarAccuracy),
-    weaknessFromMetric("fluency", "Long answers without pauses", progress.metrics.fluencyScore * 10),
-    weaknessFromMetric("pronunciation", "Natural rhythm and stress", progress.metrics.pronunciationScore * 10),
+    weaknessFromMetric("grammar", "Precisión gramatical bajo presión", progress.metrics.grammarAccuracy),
+    weaknessFromMetric("fluency", "Respuestas largas sin pausas excesivas", progress.metrics.fluencyScore * 10),
+    weaknessFromMetric("pronunciation", "Ritmo natural y énfasis correcto", progress.metrics.pronunciationScore * 10),
     weaknessFromMetric(
       "listening",
-      `Understanding ${weakestAccent[0]} accent in fast speech`,
+      `Comprensión del acento ${weakestAccent[0]} en habla rápida`,
       weakestAccent[1],
     ),
   ];

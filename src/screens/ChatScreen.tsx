@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { postTutorMessage } from "../services/api/client";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Audio } from "expo-av";
+import { postTutorMessage, transcribeAudio } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
 
@@ -13,7 +14,7 @@ type ChatMessage = {
 const CONTEXT_WINDOW = 8;
 
 export function ChatScreen() {
-  const { updateGoal } = useAppState();
+  const { updateGoal, progress } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +22,34 @@ export function ChatScreen() {
   const [lastSource, setLastSource] = useState<"openai" | "gemini" | "groq" | "fallback" | null>(null);
   const [lastCorrection, setLastCorrection] = useState<string | null>(null);
   const [lastExercise, setLastExercise] = useState<string | null>(null);
+  const [lastPronunciationHint, setLastPronunciationHint] = useState<string | null>(null);
   const [phase, setPhase] = useState<"setup" | "practice">("setup");
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+
+  function onClearChat() {
+    Alert.alert(
+      "Nueva sesión",
+      "¿Querés empezar una conversación nueva? El historial actual se borrará.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Nueva sesión",
+          style: "destructive",
+          onPress: () => {
+            setMessages([]);
+            setPhase("setup");
+            setLastCorrection(null);
+            setLastExercise(null);
+            setLastPronunciationHint(null);
+            setLastSource(null);
+            setError(null);
+          },
+        },
+      ]
+    );
+  }
 
   async function onSend() {
     if (!message.trim()) return;
@@ -41,11 +68,20 @@ export function ChatScreen() {
     ]);
 
     try {
-      const response = await postTutorMessage(trimmed, historyWindow);
+      const response = await postTutorMessage(trimmed, historyWindow, progress ? {
+        level: progress.profile.level,
+        grammarAccuracy: progress.metrics.grammarAccuracy,
+        fluencyScore: progress.metrics.fluencyScore,
+        pronunciationScore: progress.metrics.pronunciationScore,
+        weaknesses: progress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
+        goals: progress.profile.goals,
+      } : undefined);
       setLastSource(response.source || null);
       setLastCorrection(response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null);
       setLastExercise(response.exercise && response.exercise.toLowerCase() !== "null" ? response.exercise : null);
-      if (response.phase) setPhase(response.phase);
+      setLastPronunciationHint(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null" ? response.pronunciationHint : null);
+      // Phase can advance but never revert to setup
+      if (response.phase === "practice") setPhase("practice");
 
       setMessages((current) => [
         ...current.slice(-CONTEXT_WINDOW),
@@ -63,6 +99,43 @@ export function ChatScreen() {
     setMessage("");
   }
 
+  async function onMicPress() {
+    if (recording) {
+      // Stop recording and transcribe
+      setIsTranscribing(true);
+      try {
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        setRecording(null);
+        if (uri) {
+          const text = await transcribeAudio(uri);
+          setMessage(text);
+        }
+      } catch (e) {
+        console.error("[Mic] transcription error:", e);
+        setError(`No se pudo transcribir el audio: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setIsTranscribing(false);
+      }
+    } else {
+      // Start recording
+      try {
+        const { granted } = await Audio.requestPermissionsAsync();
+        if (!granted) {
+          Alert.alert("Permiso requerido", "Necesitamos acceso al micrófono para grabar tu voz.");
+          return;
+        }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording: newRecording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        setRecording(newRecording);
+      } catch (e) {
+        setError("No se pudo iniciar la grabación.");
+      }
+    }
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -71,7 +144,14 @@ export function ChatScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Tutor Chat</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Tutor Chat</Text>
+          {messages.length > 0 && (
+            <Pressable style={styles.newSessionBtn} onPress={onClearChat}>
+              <Text style={styles.newSessionText}>Nueva sesión</Text>
+            </Pressable>
+          )}
+        </View>
         {phase === "setup" ? (
           <Text style={styles.helper}>El tutor te va a preguntar tu nivel y la temática que querés practicar antes de empezar.</Text>
         ) : (
@@ -106,6 +186,12 @@ export function ChatScreen() {
             <Text style={styles.correctionText}>{lastCorrection}</Text>
           </View>
         )}
+        {lastPronunciationHint && (
+          <View style={styles.pronunciationBox}>
+            <Text style={styles.pronunciationLabel}>🗣 Pronunciación</Text>
+            <Text style={styles.pronunciationText}>{lastPronunciationHint}</Text>
+          </View>
+        )}
         {lastExercise && (
           <View style={styles.exerciseBox}>
             <Text style={styles.exerciseLabel}>Ejercicio propuesto</Text>
@@ -122,15 +208,26 @@ export function ChatScreen() {
             {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
           </Text>
         )}
-        <TextInput
-          value={message}
-          onChangeText={setMessage}
-          placeholder={phase === "setup" ? "Respondé en español..." : "Write in English..."}
-          placeholderTextColor={theme.colors.muted}
-          style={styles.input}
-          multiline
-        />
-        <Pressable style={[styles.button, loading && styles.buttonDisabled]} onPress={onSend} disabled={loading}>
+        <View style={styles.inputRow}>
+          <TextInput
+            value={message}
+            onChangeText={setMessage}
+            placeholder={phase === "setup" ? "Respondé en español..." : "Write in English..."}
+            placeholderTextColor={theme.colors.muted}
+            style={styles.input}
+            multiline
+          />
+          <Pressable
+            style={[styles.micBtn, recording && styles.micBtnActive]}
+            onPress={onMicPress}
+            disabled={loading || isTranscribing}
+          >
+            <Text style={styles.micBtnText}>
+              {isTranscribing ? "⏳" : recording ? "⏹" : "🎤"}
+            </Text>
+          </Pressable>
+        </View>
+        <Pressable style={[styles.button, (loading || isTranscribing) && styles.buttonDisabled]} onPress={onSend} disabled={loading || isTranscribing}>
           <Text style={styles.buttonText}>{loading ? "Enviando..." : "Enviar"}</Text>
         </Pressable>
       </View>
@@ -149,10 +246,26 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     gap: 6,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   title: {
     fontSize: 22,
     fontWeight: "700",
     color: theme.colors.text,
+  },
+  newSessionBtn: {
+    backgroundColor: theme.colors.border,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  newSessionText: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    fontWeight: "600",
   },
   helper: {
     fontSize: 13,
@@ -207,7 +320,13 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: 11,
   },
+  inputRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "flex-end",
+  },
   input: {
+    flex: 1,
     backgroundColor: theme.colors.panel,
     borderColor: theme.colors.border,
     borderWidth: 1,
@@ -218,6 +337,20 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     textAlignVertical: "top",
     fontSize: 14,
+  },
+  micBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  micBtnActive: {
+    backgroundColor: "#e53935",
+  },
+  micBtnText: {
+    fontSize: 20,
   },
   button: {
     backgroundColor: theme.colors.accent,
@@ -261,6 +394,23 @@ const styles = StyleSheet.create({
   },
   correctionText: {
     color: "#5c3d00",
+    fontSize: 13,
+  },
+  pronunciationBox: {
+    backgroundColor: "#ede7f6",
+    borderRadius: 10,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: "#7c4dff",
+  },
+  pronunciationLabel: {
+    fontWeight: "700" as const,
+    fontSize: 12,
+    color: "#4a148c",
+    marginBottom: 2,
+  },
+  pronunciationText: {
+    color: "#311b92",
     fontSize: 13,
   },
   exerciseBox: {

@@ -2,6 +2,9 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 const Groq = require("groq-sdk");
 
 const app = express();
@@ -16,6 +19,13 @@ const apiKey =
 const contextWindow = Number(process.env.CHAT_CONTEXT_WINDOW || 8);
 
 const groq = apiKey ? new Groq({ apiKey }) : null;
+const AUDIO_TMP_DIR = "/tmp/eeia-audio/";
+fs.mkdirSync(AUDIO_TMP_DIR, { recursive: true });
+const audioStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, AUDIO_TMP_DIR),
+  filename: (_req, _file, cb) => cb(null, `${Date.now()}.m4a`),
+});
+const upload = multer({ storage: audioStorage });
 
 app.use(cors());
 app.use(express.json());
@@ -51,6 +61,9 @@ app.post("/tutor/message", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
     const history = sanitizeHistory(req.body?.history);
+    const learnerProfile = req.body?.learnerProfile && typeof req.body.learnerProfile === "object"
+      ? req.body.learnerProfile
+      : null;
     if (!message) {
       return res.status(400).json({ error: "message is required" });
     }
@@ -69,6 +82,25 @@ app.post("/tutor/message", async (req, res) => {
             role: "system",
             content:
               "You are a friendly English coach for Spanish-speaking students of ALL ages, including young children who are just starting or want to start learning English.\n" +
+              (learnerProfile ? (
+                "\nSTUDENT PROFILE (use this to personalize your coaching):\n" +
+                (learnerProfile.level ? `- Declared level: ${learnerProfile.level}\n` : "") +
+                (typeof learnerProfile.grammarAccuracy === "number" ? `- Grammar accuracy: ${learnerProfile.grammarAccuracy}% — ${
+                  learnerProfile.grammarAccuracy < 50 ? "needs significant grammar work" :
+                  learnerProfile.grammarAccuracy < 75 ? "grammar is developing, reinforce structure" :
+                  "grammar is solid, focus on fluency and nuance"}\n` : "") +
+                (typeof learnerProfile.fluencyScore === "number" ? `- Fluency score: ${learnerProfile.fluencyScore}/10 — ${
+                  learnerProfile.fluencyScore < 4 ? "encourage longer responses, don't rush" :
+                  learnerProfile.fluencyScore < 7 ? "push for more complex sentence structures" :
+                  "fluency is good, challenge with faster pacing and idioms"}\n` : "") +
+                (Array.isArray(learnerProfile.weaknesses) && learnerProfile.weaknesses.length > 0
+                  ? `- Main weaknesses to target: ${learnerProfile.weaknesses.map((w) => `${w.detail} (${w.area}, priority ${w.severity}/5)`).join("; ")}\n`
+                  : "") +
+                (Array.isArray(learnerProfile.goals) && learnerProfile.goals.length > 0
+                  ? `- Student goals: ${learnerProfile.goals.join(", ")}\n`
+                  : "") +
+                "Use this profile to: adjust difficulty, focus corrections on their weak areas, prioritize their goals, and propose exercises that target their specific weaknesses.\n"
+              ) : "") +
               "Your conversation has two phases:\n\n" +
 
               "PHASE 1 - SETUP:\n" +
@@ -86,6 +118,7 @@ app.post("/tutor/message", async (req, res) => {
               "- For 'básico': mix Spanish explanations with short English sentences. Introduce simple structures.\n" +
               "- For 'intermedio' or 'avanzado': conduct the conversation fully IN ENGLISH at the appropriate level.\n" +
               "- Act as their conversation partner and guide on the chosen topic.\n" +
+              "- IMPORTANT: If the student writes in Spanish (or mixes Spanish and English), DO NOT switch to Spanish yourself. Instead, gently acknowledge what they said, respond in English, and encourage them to try saying it in English. You can briefly hint at the English word they were missing if needed, but always keep YOUR response in English and stay in coach mode.\n" +
               "- If the student makes a WRITING error (typo, spelling), explain IN SPANISH and set correction.\n" +
               "- If the student makes a GRAMMAR error (wrong tense, structure, agreement), explain IN SPANISH and set correction.\n" +
               "- If the student makes a PRAGMATIC error (wrong register, culturally odd phrase, awkward wording for the context), explain IN SPANISH and set correction.\n" +
@@ -98,7 +131,8 @@ app.post("/tutor/message", async (req, res) => {
               "- reply (string): your response.\n" +
               "- correction (string or null): correction explanation in Spanish, or null.\n" +
               "- exercise (string or null): proposed exercise in Spanish, or null.\n" +
-              "- suggestedGoal (string): short learning goal based on this exchange.\n" +
+              "- pronunciationHint (string or null): if the student used a word with tricky pronunciation, provide a brief phonetic hint IN SPANISH (e.g. 'though' → /ðoʊ/, la 'th' es sonora). Set to null otherwise.\n" +
+              "- suggestedGoal (string): short learning goal based on this exchange, written IN SPANISH.\n" +
               "- phase (string): 'setup' or 'practice'.\n" +
               "Always be patient, warm, encouraging and fun. Never be harsh. Adapt your tone to the student's age and level.",
           },
@@ -126,13 +160,16 @@ app.post("/tutor/message", async (req, res) => {
           : buildFallbackReply(message).suggestedGoal;
       const correction = typeof parsed.correction === "string" && parsed.correction.toLowerCase() !== "null" ? parsed.correction : null;
       const exercise = typeof parsed.exercise === "string" && parsed.exercise.toLowerCase() !== "null" ? parsed.exercise : null;
-      const phase = parsed.phase === "practice" ? "practice" : "setup";
+      const pronunciationHint = typeof parsed.pronunciationHint === "string" && parsed.pronunciationHint.toLowerCase() !== "null" ? parsed.pronunciationHint : null;
+      // If the conversation already has history (level+topic established), never revert to setup
+      const phase = (parsed.phase === "practice" || history.length >= 4) ? "practice" : "setup";
 
       return res.json({
         reply: safeReply,
         suggestedGoal: safeGoal,
         correction,
         exercise,
+        pronunciationHint,
         phase,
         source: "groq",
       });
@@ -143,6 +180,26 @@ app.post("/tutor/message", async (req, res) => {
   } catch (error) {
     console.error("Tutor endpoint error", error);
     return res.status(500).json({ error: "internal_error" });
+  }
+});
+
+app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
+  if (!groq) return res.status(503).json({ error: "groq_not_configured" });
+  if (!req.file) return res.status(400).json({ error: "audio file required" });
+
+  try {
+    const transcription = await groq.audio.transcriptions.create({
+      file: fs.createReadStream(req.file.path),
+      model: "whisper-large-v3",
+      language: "en",
+      response_format: "json",
+    });
+    res.json({ text: transcription.text });
+  } catch (err) {
+    console.error("Whisper transcription failed", err);
+    res.status(500).json({ error: "transcription_failed", detail: err.message });
+  } finally {
+    fs.unlink(req.file.path, () => {});
   }
 });
 
