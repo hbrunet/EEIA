@@ -17,6 +17,7 @@ Mobile-first MVP for an adaptive English learning coach focused on weakness-base
 - Lesson flow screen generated from adaptive engine rules
 - Progress metrics screen with weaknesses and recent sessions
 - Accent lab with TTS listening sample per accent and score updates
+- Pronunciation practice with voice recording, transcription-based scoring, and feedback
 - Weekly planner generated from current weak areas
 - API client layer and environment config
 
@@ -37,12 +38,14 @@ cp .env.example .env
 3. Configure environment variables in `.env`:
 
 ```bash
-EXPO_PUBLIC_API_BASE_URL=http://localhost:3000
+EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:3000
 SERVER_PORT=3000
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4.1-mini
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.3-70b-versatile
 CHAT_CONTEXT_WINDOW=8
 ```
+
+If you run the app on a physical phone, `localhost` points to the phone itself, not to your Mac. Use your Mac's LAN IP instead, for example `http://192.168.1.20:3000`. If `EXPO_PUBLIC_API_BASE_URL` is omitted, the app now tries to infer the Expo dev host automatically.
 
 4. Start tutor backend:
 

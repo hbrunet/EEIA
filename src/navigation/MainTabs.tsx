@@ -1,12 +1,14 @@
+import { useEffect, useRef } from "react";
+import { Alert } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { HomeScreen } from "../screens/HomeScreen";
 import { ChatScreen } from "../screens/ChatScreen";
-import { LessonsScreen } from "../screens/LessonsScreen";
 import { ProgressScreen } from "../screens/ProgressScreen";
 import { AccentsScreen } from "../screens/AccentsScreen";
-import { PlannerScreen } from "../screens/PlannerScreen";
+import { ProfileScreen } from "../screens/ProfileScreen";
+import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
 
 const Tab = createBottomTabNavigator();
@@ -16,22 +18,63 @@ type IoniconsName = React.ComponentProps<typeof Ionicons>["name"];
 const TAB_ICONS: Record<string, { active: IoniconsName; inactive: IoniconsName }> = {
   Home:     { active: "home",           inactive: "home-outline" },
   Chat:     { active: "chatbubble",     inactive: "chatbubble-outline" },
-  Lessons:  { active: "book",           inactive: "book-outline" },
   Progress: { active: "bar-chart",      inactive: "bar-chart-outline" },
   Accents:  { active: "mic",            inactive: "mic-outline" },
-  Planner:  { active: "calendar",       inactive: "calendar-outline" },
+  Profile:  { active: "person",         inactive: "person-outline" },
 };
 
 const TAB_LABELS: Record<string, string> = {
   Home:     "Inicio",
   Chat:     "Chat",
-  Lessons:  "Lecciones",
   Progress: "Progreso",
-  Accents:  "Acentos",
-  Planner:  "Planner",
+  Accents:  "Pronunciación",
+  Profile:  "Perfil",
 };
 
+const BADGE_MILESTONES = [3, 7, 14, 30];
+
+function getTodayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function computeCurrentStreak(history: string[]): number {
+  const keys = new Set(history || []);
+  let streak = 0;
+  const cursor = new Date(`${getTodayKey()}T00:00:00`);
+
+  while (true) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!keys.has(key)) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return streak;
+}
+
 export function MainTabs() {
+  const { progress } = useAppState();
+  const previousHistoryCountRef = useRef(progress?.dailyGoalHistory?.length || 0);
+
+  useEffect(() => {
+    if (!progress) return;
+
+    const currentCount = progress.dailyGoalHistory?.length || 0;
+    const previousCount = previousHistoryCountRef.current;
+    previousHistoryCountRef.current = currentCount;
+
+    if (currentCount <= previousCount) return;
+
+    const streak = computeCurrentStreak(progress.dailyGoalHistory || []);
+    if (!BADGE_MILESTONES.includes(streak)) return;
+
+    Alert.alert(
+      "Nueva insignia desbloqueada",
+      `Excelente constancia. Alcanzaste la insignia de ${streak} días seguidos.`,
+      [{ text: "Genial" }],
+    );
+  }, [progress]);
+
   return (
     <NavigationContainer>
       <Tab.Navigator
@@ -54,10 +97,9 @@ export function MainTabs() {
       >
         <Tab.Screen name="Home" component={HomeScreen} options={{ title: "Inicio" }} />
         <Tab.Screen name="Chat" component={ChatScreen} options={{ title: "Chat con tutor" }} />
-        <Tab.Screen name="Lessons" component={LessonsScreen} options={{ title: "Lecciones" }} />
         <Tab.Screen name="Progress" component={ProgressScreen} options={{ title: "Mi progreso" }} />
-        <Tab.Screen name="Accents" component={AccentsScreen} options={{ title: "Laboratorio de acentos" }} />
-        <Tab.Screen name="Planner" component={PlannerScreen} options={{ title: "Planificador" }} />
+        <Tab.Screen name="Accents" component={AccentsScreen} options={{ title: "Entrenamiento" }} />
+        <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: "Tu perfil" }} />
       </Tab.Navigator>
     </NavigationContainer>
   );

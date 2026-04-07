@@ -5,14 +5,28 @@ export type TutorChatMessage = {
   text: string;
 };
 
+function buildNetworkError(action: string, error: unknown): Error {
+  if (error instanceof Error) {
+    return new Error(`${action} failed. Verify that the backend is reachable at ${env.apiBaseUrl}. Original error: ${error.message}`);
+  }
+
+  return new Error(`${action} failed. Verify that the backend is reachable at ${env.apiBaseUrl}.`);
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${env.apiBaseUrl}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${env.apiBaseUrl}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+      ...init,
+    });
+  } catch (error) {
+    throw buildNetworkError("API request", error);
+  }
 
   if (!response.ok) {
     throw new Error(`API request failed with status ${response.status}`);
@@ -34,11 +48,35 @@ export type TutorMessageResponse = {
   reply: string;
   suggestedGoal: string;
   correction?: string | null;
-  exercise?: string | null;
   pronunciationHint?: string | null;
+  capturedLevel?: "A1" | "A2" | "B1" | "B2" | "C1" | null;
+  capturedName?: string | null;
   phase?: "setup" | "practice";
   source?: "openai" | "gemini" | "groq" | "fallback";
   warning?: string;
+};
+
+export type PronunciationAssessmentResponse = {
+  transcript: string;
+  accuracyScore: number;
+  targetWords: string[];
+  transcriptWords: string[];
+  missedWords: string[];
+  extraWords: string[];
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  practiceTip: string;
+  source?: "groq" | "fallback";
+};
+
+export type TutorLookupResponse = {
+  term: string;
+  translation: string;
+  explanation: string;
+  example: string;
+  pronunciation?: string | null;
+  source?: "groq" | "fallback";
 };
 
 export async function transcribeAudio(audioUri: string): Promise<string> {
@@ -49,14 +87,52 @@ export async function transcribeAudio(audioUri: string): Promise<string> {
     name: "recording.m4a",
   } as any);
 
-  const response = await fetch(`${env.apiBaseUrl}/tutor/transcribe`, {
-    method: "POST",
-    body: formData,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${env.apiBaseUrl}/tutor/transcribe`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    throw buildNetworkError("Transcription request", error);
+  }
 
   if (!response.ok) throw new Error(`Transcription failed: ${response.status}`);
   const data = await response.json();
   return data.text as string;
+}
+
+export async function assessPronunciation(
+  audioUri: string,
+  targetText: string,
+  accent: string,
+): Promise<PronunciationAssessmentResponse> {
+  const formData = new FormData();
+  formData.append("audio", {
+    uri: audioUri,
+    type: "audio/m4a",
+    name: "pronunciation.m4a",
+  } as any);
+  formData.append("targetText", targetText);
+  formData.append("accent", accent);
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${env.apiBaseUrl}/tutor/pronunciation`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    throw buildNetworkError("Pronunciation assessment", error);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Pronunciation assessment failed: ${response.status}`);
+  }
+
+  return (await response.json()) as PronunciationAssessmentResponse;
 }
 
 export async function postTutorMessage(
@@ -67,5 +143,15 @@ export async function postTutorMessage(
   return apiRequest<TutorMessageResponse>("/tutor/message", {
     method: "POST",
     body: JSON.stringify({ message, history, learnerProfile }),
+  });
+}
+
+export async function lookupTutorTerm(
+  term: string,
+  learnerLevel?: string,
+): Promise<TutorLookupResponse> {
+  return apiRequest<TutorLookupResponse>("/tutor/lookup", {
+    method: "POST",
+    body: JSON.stringify({ term, learnerLevel }),
   });
 }

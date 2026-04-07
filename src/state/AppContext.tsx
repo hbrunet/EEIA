@@ -1,15 +1,107 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { applyGoalUpdate, applySessionResult, runDiagnostic } from "../domain/learningEngine";
 import { loadProgress, saveProgress } from "../storage/progressStore";
-import { AppProgress, SessionResult } from "../types/progress";
+import { Accent, AppProgress, EnglishLevel, SessionResult } from "../types/progress";
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getTodayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buildDailyGoal() {
+  return {
+    dateKey: getTodayKey(),
+    title: "Completar rutina de pronunciación",
+    checklist: [
+      "Escuchar el circuito diario",
+      "Grabar una ronda rápida",
+      "Revisar resultado final",
+    ],
+    targetRoutines: 1,
+    completedRoutines: 0,
+    completed: false,
+  };
+}
+
+function appendGoalHistory(history: string[], dateKey: string): string[] {
+  if (!dateKey) return history;
+  if (history.includes(dateKey)) return history;
+  return [...history, dateKey].slice(-60);
+}
+
+function ensureTodayGoal(progress: AppProgress): AppProgress {
+  if (progress.dailyGoal?.dateKey === getTodayKey()) return progress;
+
+  const history = progress.dailyGoal?.completed
+    ? appendGoalHistory(progress.dailyGoalHistory || [], progress.dailyGoal.dateKey)
+    : (progress.dailyGoalHistory || []);
+
+  return {
+    ...progress,
+    dailyGoal: buildDailyGoal(),
+    dailyGoalHistory: history,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+}
+
+function upsertTodayMetricSnapshot(progress: AppProgress): AppProgress {
+  const dateKey = getTodayKey();
+  const snapshot = {
+    dateKey,
+    grammarAccuracy: progress.metrics.grammarAccuracy,
+    fluencyScore: progress.metrics.fluencyScore,
+    pronunciationScore: progress.metrics.pronunciationScore,
+    listeningByAccent: { ...progress.metrics.listeningByAccent },
+  };
+
+  const metricHistory = Array.isArray(progress.metricHistory) ? [...progress.metricHistory] : [];
+  const existingIndex = metricHistory.findIndex((item) => item.dateKey === dateKey);
+
+  if (existingIndex >= 0) {
+    metricHistory[existingIndex] = snapshot;
+  } else {
+    metricHistory.push(snapshot);
+  }
+
+  const trimmedHistory = metricHistory
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+    .slice(-60);
+
+  return {
+    ...progress,
+    metricHistory: trimmedHistory,
+  };
+}
 
 type AppContextValue = {
   progress: AppProgress | null;
   loading: boolean;
+  updateProfile: (profile: { name: string; level: EnglishLevel }) => Promise<void>;
+  setProfileLevelFromChat: (level: EnglishLevel) => Promise<void>;
+  setProfileNameFromChat: (name: string) => Promise<void>;
   updateGoal: (goal: string) => Promise<void>;
   completeSession: (result: SessionResult) => Promise<void>;
   runInitialDiagnostic: () => Promise<void>;
   boostListening: (accent: keyof AppProgress["metrics"]["listeningByAccent"]) => Promise<void>;
+  recordPronunciationPractice: (score: number, accent: Accent) => Promise<void>;
+  recordPronunciationWordAttempt: (word: string, score: number, accent: Accent) => Promise<void>;
+  recordPronunciationWordAttempts: (attempts: Array<{ word: string; score: number; accent: Accent }>) => Promise<void>;
+  recordLookupTerm: (term: string) => Promise<void>;
+  clearLookupHistory: () => Promise<void>;
+  recordChatSessionSummary: (entry: {
+    startedAt: string;
+    endedAt: string;
+    topic: string;
+    turns: number;
+    correctionCount: number;
+    pronunciationHintCount: number;
+    source: "openai" | "gemini" | "groq" | "fallback";
+  }) => Promise<void>;
+  recordDailyRoutineCompleted: () => Promise<void>;
+  markDailyGoalCompleted: () => Promise<void>;
 };
 
 const AppContext = createContext<AppContextValue | undefined>(undefined);
@@ -20,8 +112,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function bootstrap() {
-      const initial = await loadProgress();
+      const initial = upsertTodayMetricSnapshot(ensureTodayGoal(await loadProgress()));
       setProgress(initial);
+      await saveProgress(initial);
       setLoading(false);
     }
 
@@ -29,39 +122,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function persist(next: AppProgress) {
-    setProgress(next);
-    await saveProgress(next);
+    const normalized = upsertTodayMetricSnapshot(ensureTodayGoal(next));
+    setProgress(normalized);
+    await saveProgress(normalized);
   }
 
   async function updateGoal(goal: string) {
     if (!progress) return;
-    const next = applyGoalUpdate(progress, goal);
+    const next = applyGoalUpdate(ensureTodayGoal(progress), goal);
+    await persist(next);
+  }
+
+  async function updateProfile(profileInput: { name: string; level: EnglishLevel }) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+    const cleanName = profileInput.name.trim() || "Estudiante";
+
+    const next: AppProgress = {
+      ...safeProgress,
+      profile: {
+        ...safeProgress.profile,
+        name: cleanName,
+        level: profileInput.level,
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function setProfileLevelFromChat(level: EnglishLevel) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      profile: {
+        ...safeProgress.profile,
+        level,
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function setProfileNameFromChat(name: string) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+    const cleanName = name.trim();
+    if (!cleanName) return;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      profile: {
+        ...safeProgress.profile,
+        name: cleanName,
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
     await persist(next);
   }
 
   async function completeSession(result: SessionResult) {
     if (!progress) return;
-    const next = applySessionResult(progress, result);
+    const next = applySessionResult(ensureTodayGoal(progress), result);
     await persist(next);
   }
 
   async function runInitialDiagnostic() {
     if (!progress || progress.diagnosticCompleted) return;
-    const next = runDiagnostic(progress);
+    const next = runDiagnostic(ensureTodayGoal(progress));
     await persist(next);
   }
 
   async function boostListening(accent: keyof AppProgress["metrics"]["listeningByAccent"]) {
     if (!progress) return;
-    const current = progress.metrics.listeningByAccent[accent];
+    const safeProgress = ensureTodayGoal(progress);
+    const current = safeProgress.metrics.listeningByAccent[accent];
     const boosted = Math.min(100, current + 4);
 
     const next: AppProgress = {
-      ...progress,
+      ...safeProgress,
       metrics: {
-        ...progress.metrics,
+        ...safeProgress.metrics,
         listeningByAccent: {
-          ...progress.metrics.listeningByAccent,
+          ...safeProgress.metrics.listeningByAccent,
           [accent]: boosted,
         },
       },
@@ -71,8 +218,243 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
+  async function recordPronunciationPractice(score: number, accent: Accent) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const pronunciationDelta = score >= 90 ? 0.6 : score >= 75 ? 0.4 : score >= 60 ? 0.2 : 0.1;
+    const listeningDelta = score >= 75 ? 2 : 1;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      metrics: {
+        ...safeProgress.metrics,
+        pronunciationScore: clamp(safeProgress.metrics.pronunciationScore + pronunciationDelta, 1, 10),
+        listeningByAccent: {
+          ...safeProgress.metrics.listeningByAccent,
+          [accent]: clamp(safeProgress.metrics.listeningByAccent[accent] + listeningDelta, 0, 100),
+        },
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function recordPronunciationWordAttempt(word: string, score: number, accent: Accent) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const normalizedWord = word.trim().toLowerCase();
+    if (!normalizedWord) return;
+
+    const now = new Date().toISOString();
+    const existing = safeProgress.pronunciationWordStats.find((item) => item.word === normalizedWord);
+
+    const updatedEntry = existing
+      ? {
+          ...existing,
+          attempts: existing.attempts + 1,
+          lowScoreCount: existing.lowScoreCount + (score < 70 ? 1 : 0),
+          avgScore: Math.round(((existing.avgScore * existing.attempts + score) / (existing.attempts + 1)) * 10) / 10,
+          lastScore: score,
+          lastPracticedAt: now,
+          accent,
+        }
+      : {
+          word: normalizedWord,
+          attempts: 1,
+          lowScoreCount: score < 70 ? 1 : 0,
+          avgScore: score,
+          lastScore: score,
+          lastPracticedAt: now,
+          accent,
+        };
+
+    const withoutCurrent = safeProgress.pronunciationWordStats.filter((item) => item.word !== normalizedWord);
+    const nextStats = [updatedEntry, ...withoutCurrent].slice(0, 80);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      pronunciationWordStats: nextStats,
+      lastUpdatedAt: now,
+    };
+
+    await persist(next);
+  }
+
+  async function recordPronunciationWordAttempts(attempts: Array<{ word: string; score: number; accent: Accent }>) {
+    if (!progress || attempts.length === 0) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const now = new Date().toISOString();
+    const map = new Map(safeProgress.pronunciationWordStats.map((item) => [item.word, item]));
+
+    for (const attempt of attempts) {
+      const normalizedWord = attempt.word.trim().toLowerCase();
+      if (!normalizedWord) continue;
+
+      const existing = map.get(normalizedWord);
+      if (existing) {
+        map.set(normalizedWord, {
+          ...existing,
+          attempts: existing.attempts + 1,
+          lowScoreCount: existing.lowScoreCount + (attempt.score < 70 ? 1 : 0),
+          avgScore: Math.round(((existing.avgScore * existing.attempts + attempt.score) / (existing.attempts + 1)) * 10) / 10,
+          lastScore: attempt.score,
+          lastPracticedAt: now,
+          accent: attempt.accent,
+        });
+      } else {
+        map.set(normalizedWord, {
+          word: normalizedWord,
+          attempts: 1,
+          lowScoreCount: attempt.score < 70 ? 1 : 0,
+          avgScore: attempt.score,
+          lastScore: attempt.score,
+          lastPracticedAt: now,
+          accent: attempt.accent,
+        });
+      }
+    }
+
+    const nextStats = Array.from(map.values())
+      .sort((a, b) => new Date(b.lastPracticedAt).getTime() - new Date(a.lastPracticedAt).getTime())
+      .slice(0, 80);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      pronunciationWordStats: nextStats,
+      lastUpdatedAt: now,
+    };
+
+    await persist(next);
+  }
+
+  async function recordLookupTerm(term: string) {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+    const normalizedTerm = term.trim();
+    if (!normalizedTerm) return;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      lookupHistory: [
+        normalizedTerm,
+        ...(safeProgress.lookupHistory || []).filter((item) => item.toLowerCase() !== normalizedTerm.toLowerCase()),
+      ].slice(0, 10),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function clearLookupHistory() {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      lookupHistory: [],
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function recordChatSessionSummary(entry: {
+    startedAt: string;
+    endedAt: string;
+    topic: string;
+    turns: number;
+    correctionCount: number;
+    pronunciationHintCount: number;
+    source: "openai" | "gemini" | "groq" | "fallback";
+  }) {
+    if (!progress || entry.turns <= 0) return;
+    const safeProgress = ensureTodayGoal(progress);
+
+    const nextEntry = {
+      startedAt: entry.startedAt,
+      endedAt: entry.endedAt,
+      topic: entry.topic.trim() || "Práctica libre",
+      turns: entry.turns,
+      correctionCount: entry.correctionCount,
+      pronunciationHintCount: entry.pronunciationHintCount,
+      source: entry.source,
+    };
+
+    const next: AppProgress = {
+      ...safeProgress,
+      chatSessionHistory: [nextEntry, ...(safeProgress.chatSessionHistory || [])].slice(0, 60),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function recordDailyRoutineCompleted() {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+    const current = safeProgress.dailyGoal;
+    const nextCompletedRoutines = Math.min(current.targetRoutines, current.completedRoutines + 1);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      dailyGoal: {
+        ...current,
+        completedRoutines: nextCompletedRoutines,
+        completed: nextCompletedRoutines >= current.targetRoutines,
+      },
+      dailyGoalHistory:
+        nextCompletedRoutines >= current.targetRoutines
+          ? appendGoalHistory(safeProgress.dailyGoalHistory || [], current.dateKey)
+          : (safeProgress.dailyGoalHistory || []),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function markDailyGoalCompleted() {
+    if (!progress) return;
+    const safeProgress = ensureTodayGoal(progress);
+    const current = safeProgress.dailyGoal;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      dailyGoal: {
+        ...current,
+        completedRoutines: current.targetRoutines,
+        completed: true,
+      },
+      dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], current.dateKey),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
   const value = useMemo(
-    () => ({ progress, loading, updateGoal, completeSession, runInitialDiagnostic, boostListening }),
+    () => ({
+      progress,
+      loading,
+      updateProfile,
+      setProfileLevelFromChat,
+      setProfileNameFromChat,
+      updateGoal,
+      completeSession,
+      runInitialDiagnostic,
+      boostListening,
+      recordPronunciationPractice,
+      recordPronunciationWordAttempt,
+      recordPronunciationWordAttempts,
+      recordLookupTerm,
+      clearLookupHistory,
+      recordChatSessionSummary,
+      recordDailyRoutineCompleted,
+      markDailyGoalCompleted,
+    }),
     [progress, loading],
   );
 
