@@ -1,9 +1,17 @@
 {
   "expo": {
     "name": "EEIA",
-    "slug": "EEIA",
+    "slug": "eeia",
     "version": "1.0.0",
     "orientation": "portrait",
+    "updates": {
+      "url": "https://u.expo.dev/4c3f84d7-27a0-439f-84a4-7b00cd4f54aa",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
@@ -25,6 +33,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "4c3f84d7-27a0-439f-84a4-7b00cd4f54aa"
+      }
+    },
+    "owner": "hbrunet"
   }
 }

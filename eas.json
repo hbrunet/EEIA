@@ -1,0 +1,21 @@
+{
+  "cli": {
+    "version": ">= 18.0.0"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "channel": "main",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
