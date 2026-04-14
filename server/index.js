@@ -8,7 +8,7 @@ const path = require("path");
 const Groq = require("groq-sdk");
 
 const app = express();
-const port = Number(process.env.SERVER_PORT || 3000);
+const port = Number(process.env.PORT || process.env.SERVER_PORT || 3000);
 const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const rawApiKey = process.env.GROQ_API_KEY;
 const apiKey =
@@ -36,6 +36,41 @@ function buildFallbackReply(message) {
       `Great focus. Let's practice this in 3 short turns. First, answer this: ${message}. ` +
       "Then I will correct you and give one natural alternative.",
     suggestedGoal: `Practice ${message} in short speaking rounds with correction`,
+    source: "fallback",
+  };
+}
+
+function buildNameOnlySetupReply() {
+  return {
+    reply: "Antes de seguir, decime tu nombre para personalizar la práctica 🙂",
+    suggestedGoal: "Registrar nombre del estudiante",
+    correction: null,
+    pronunciationHint: null,
+    phase: "setup",
+    source: "fallback",
+  };
+}
+
+function buildLevelOnlySetupReply() {
+  return {
+    reply:
+      "Gracias. Ahora decime tu nivel de inglés para adaptar la clase. Podés responder: nunca estudié/recién empiezo, básico, intermedio o avanzado.",
+    suggestedGoal: "Registrar nivel de inglés del estudiante",
+    correction: null,
+    pronunciationHint: null,
+    phase: "setup",
+    source: "fallback",
+  };
+}
+
+function buildTopicOnlySetupReply() {
+  return {
+    reply:
+      "Perfecto. ¿Qué tema te gustaría practicar hoy? Si no tenés uno puntual, puedo proponerte opciones.",
+    suggestedGoal: "Definir tema de práctica",
+    correction: null,
+    pronunciationHint: null,
+    phase: "setup",
     source: "fallback",
   };
 }
@@ -122,10 +157,94 @@ function inferNameFromMessage(message) {
   if (!match || !match[1]) return null;
 
   const candidate = match[1].trim();
-  if (!candidate || /\bnivel\b|\blevel\b/i.test(candidate)) return null;
+  if (!candidate || isInvalidNameCandidate(candidate)) return null;
   if (/\d/.test(candidate)) return null;
 
   return candidate;
+}
+
+function didAssistantRecentlyAskName(history) {
+  if (!Array.isArray(history) || history.length === 0) return false;
+
+  const recentAssistant = [...history]
+    .reverse()
+    .find((item) => item?.role === "assistant" && typeof item?.text === "string");
+
+  if (!recentAssistant) return false;
+
+  const normalized = String(recentAssistant.text)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return /como te llam|tu nombre|what'?s your name|your name/.test(normalized);
+}
+
+function inferShortNameFromMessage(message) {
+  const raw = String(message || "").trim();
+  if (!raw) return null;
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (/\b(a1|a2|b1|b2|c1|basico|intermedio|avanzado|nivel|topic|tema|practicar)\b/.test(normalized)) {
+    return null;
+  }
+
+  if (/^[A-Za-zÁÉÍÓÚáéíóúÑñ][A-Za-zÁÉÍÓÚáéíóúÑñ'\-]{1,29}(?:\s+[A-Za-zÁÉÍÓÚáéíóúÑñ][A-Za-zÁÉÍÓÚáéíóúÑñ'\-]{1,29})?$/.test(raw)) {
+    if (isInvalidNameCandidate(raw)) return null;
+    return raw;
+  }
+
+  return null;
+}
+
+function isInvalidNameCandidate(candidate) {
+  const normalized = String(candidate || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!normalized) return true;
+
+  const blockedSingleWords = new Set([
+    "hola",
+    "hello",
+    "hi",
+    "hey",
+    "buenas",
+    "ok",
+    "dale",
+    "listo",
+    "gracias",
+    "principiante",
+    "basico",
+    "intermedio",
+    "avanzado",
+    "nivel",
+    "tema",
+    "topic",
+    "practice",
+    "practicar",
+  ]);
+
+  const blockedPhrases = [
+    "buenos dias",
+    "buenas tardes",
+    "buenas noches",
+    "nunca estudie",
+    "recien empiezo",
+    "mi nivel",
+  ];
+
+  if (blockedSingleWords.has(normalized)) return true;
+  if (blockedPhrases.some((phrase) => normalized.includes(phrase))) return true;
+  if (/\bnivel\b|\blevel\b/.test(normalized)) return true;
+
+  return false;
 }
 
 function normalizePronunciationText(input) {
@@ -252,9 +371,26 @@ app.post("/tutor/message", async (req, res) => {
     const hasConfiguredName = typeof learnerProfile?.name === "string" && learnerProfile.name.trim().length > 0;
     const normalizedLearnerStage = normalizeLearnerStage(learnerProfile?.level);
     const capturedLevel = !hasConfiguredLevel ? inferCefrLevelFromMessage(message) : null;
-    const capturedName = !hasConfiguredName ? inferNameFromMessage(message) : null;
+    const capturedName = !hasConfiguredName
+      ? inferNameFromMessage(message) || (didAssistantRecentlyAskName(history) ? inferShortNameFromMessage(message) : null)
+      : null;
+    const hasLevelAfterMessage = hasConfiguredLevel || Boolean(capturedLevel);
+    const hasNameAfterMessage = hasConfiguredName || Boolean(capturedName);
+    const shouldAskNameOnly = !hasNameAfterMessage;
+    const shouldAskLevelOnly = !shouldAskNameOnly && !hasLevelAfterMessage;
+    const shouldAskTopicOnly = !shouldAskNameOnly && !shouldAskLevelOnly && !hasConfiguredLevel && Boolean(capturedLevel);
     if (!message) {
       return res.status(400).json({ error: "message is required" });
+    }
+
+    if (shouldAskNameOnly) {
+      return res.json({ ...buildNameOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
+    }
+    if (shouldAskLevelOnly) {
+      return res.json({ ...buildLevelOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
+    }
+    if (shouldAskTopicOnly) {
+      return res.json({ ...buildTopicOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
     }
 
     if (!groq) {
@@ -296,13 +432,17 @@ app.post("/tutor/message", async (req, res) => {
               "PHASE 1 - SETUP:\n" +
               "Applies when the conversation history has no established level or topic yet.\n" +
               "- Greet the student warmly IN SPANISH.\n" +
+              (hasConfiguredName
+                ? "- The student's name is already configured in profile. DO NOT ask their name again.\n"
+                : "- Ask the student's name in a natural, short way (e.g. '¿Cómo te llamás?').\n") +
+              "- Critical flow rule: if name is missing, ask ONLY for name in this turn and do NOT ask level or topic in the same message.\n" +
               (hasConfiguredLevel
                 ? "- The student's level is already configured in profile. DO NOT ask their level again.\n"
                 : "- Ask their English level using these options: 'nunca estudié inglés / recién empiezo', 'básico', 'intermedio' or 'avanzado'.\n") +
               "- Ask what topic or situation they want to practice. For beginners or children, suggest simple options like: colores, animales, números, saludos, la familia, el cuerpo, objetos del aula.\n" +
-              (hasConfiguredLevel
+              (hasConfiguredLevel && hasConfiguredName
                 ? "- Once you have a topic from the student, confirm in Spanish and announce you will now begin.\n"
-                : "- Once you have BOTH level and topic from the student, confirm in Spanish and announce you will now begin.\n") +
+                : "- Once you have name, level and topic from the student, confirm in Spanish and announce you will now begin.\n") +
               "- Set phase to 'setup'.\n\n" +
 
               "PHASE 2 - PRACTICE:\n" +
@@ -351,15 +491,19 @@ app.post("/tutor/message", async (req, res) => {
         parsed = buildFallbackReply(message);
       }
 
-      const safeReply = typeof parsed.reply === "string" ? parsed.reply : buildFallbackReply(message).reply;
-      const safeGoal =
+      const modelReply = typeof parsed.reply === "string" ? parsed.reply : buildFallbackReply(message).reply;
+      const modelGoal =
         typeof parsed.suggestedGoal === "string"
           ? parsed.suggestedGoal
           : buildFallbackReply(message).suggestedGoal;
+      const safeReply = modelReply;
+      const safeGoal = modelGoal;
       const correction = typeof parsed.correction === "string" && parsed.correction.toLowerCase() !== "null" ? parsed.correction : null;
       const pronunciationHint = typeof parsed.pronunciationHint === "string" && parsed.pronunciationHint.toLowerCase() !== "null" ? parsed.pronunciationHint : null;
-      // If the conversation already has history (level+topic established), never revert to setup
-      const phase = (parsed.phase === "practice" || history.length >= 4) ? "practice" : "setup";
+      // Keep setup until both name and level are captured/configured.
+      const phase = (parsed.phase === "practice" && hasLevelAfterMessage && hasNameAfterMessage)
+        ? "practice"
+        : "setup";
 
       return res.json({
         reply: safeReply,

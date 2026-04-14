@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Audio } from "expo-av";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { lookupTutorTerm, postTutorMessage, transcribeAudio, TutorLookupResponse } from "../services/api/client";
@@ -11,6 +11,8 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  correctionHint?: string;
+  correctionExpanded?: boolean;
 };
 
 const CONTEXT_WINDOW = 8;
@@ -28,14 +30,51 @@ function cleanLookupToken(token: string): string {
     .trim();
 }
 
+const SPANISH_STOPWORDS = new Set([
+  "a","al","algo","alguien","algún","alguno","algunos","alguna","algunas",
+  "ante","antes","aunque","bien","bueno","cada","como","con","cual",
+  "cuando","de","del","donde","durante","él","ella","ellos","ellas",
+  "en","entre","eres","es","eso","esos","esta","está","estás","están",
+  "este","estos","fue","hay","hacia","hasta","le","les","lo","los",
+  "la","las","me","mi","muy","más","ni","no","nos","nosotros",
+  "nuestro","nuestra","o","os","para","pero","por","porque","que",
+  "quién","se","ser","si","sin","sobre","son","su","sus","también",
+  "te","tengo","tiene","tienen","todo","todos","tu","tú","un","una",
+  "unas","unos","vos","y","ya","yo",
+]);
+
+function isLikelySpanish(token: string): boolean {
+  if (/[áéíóúüñÁÉÍÓÚÜÑ]/.test(token)) return true;
+  return SPANISH_STOPWORDS.has(token.toLowerCase());
+}
+
+function getFriendlyTranscriptionError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes("empty") ||
+    normalized.includes("no speech") ||
+    normalized.includes("silence") ||
+    normalized.includes("failed: 400")
+  ) {
+    return "No detectamos voz en la grabación. Probá de nuevo hablando unos segundos cerca del micrófono.";
+  }
+
+  if (normalized.includes("network") || normalized.includes("fetch") || normalized.includes("timeout")) {
+    return "No pudimos transcribir por un problema de conexión. Revisá internet e intentá nuevamente.";
+  }
+
+  return "No pudimos transcribir tu audio. Intentá nuevamente con una frase corta y clara.";
+}
+
 export function ChatScreen() {
-  const { updateGoal, progress, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
+  const { updateGoal, progress, progressRef, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastSource, setLastSource] = useState<"openai" | "gemini" | "groq" | "fallback" | null>(null);
-  const [lastCorrection, setLastCorrection] = useState<string | null>(null);
   const [lastPronunciationHint, setLastPronunciationHint] = useState<string | null>(null);
   const [phase, setPhase] = useState<"setup" | "practice">("setup");
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -78,10 +117,29 @@ export function ChatScreen() {
     () => recentLookups.filter((item) => item.trim().includes(" ")),
     [recentLookups],
   );
+  const hasTypedMessage = message.trim().length > 0;
+  const actionDisabled = loading || isTranscribing;
+
+  function scrollToLatest(animated = true) {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated });
+    });
+  }
 
   useEffect(() => {
     return () => {
       void finalizeChatSession();
+    };
+  }, []);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      scrollToLatest(false);
+      setTimeout(() => scrollToLatest(true), 80);
+    });
+
+    return () => {
+      showSub.remove();
     };
   }, []);
 
@@ -143,7 +201,6 @@ export function ChatScreen() {
             setMessages([]);
             setSelectedSuggestedTopic(null);
             setPhase("setup");
-            setLastCorrection(null);
             setLastPronunciationHint(null);
             setLastSource(null);
             setError(null);
@@ -165,30 +222,34 @@ export function ChatScreen() {
       text: item.text,
     }));
 
+    const userMessageId = `${Date.now()}-u`;
+
     setMessages((current) => [
       ...current,
-      { id: `${Date.now()}-u`, role: "user", text: trimmed },
+      { id: userMessageId, role: "user", text: trimmed, correctionExpanded: false },
     ]);
 
     try {
-      const response = await postTutorMessage(trimmed, historyWindow, progress ? {
-        level: progress.profile.level,
-        grammarAccuracy: progress.metrics.grammarAccuracy,
-        fluencyScore: progress.metrics.fluencyScore,
-        pronunciationScore: progress.metrics.pronunciationScore,
-        weaknesses: progress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
-        goals: progress.profile.goals,
+      const latestProgress = progressRef.current;
+      const response = await postTutorMessage(trimmed, historyWindow, latestProgress ? {
+          name: latestProgress.profile.name,
+          level: latestProgress.profile.level,
+          grammarAccuracy: latestProgress.metrics.grammarAccuracy,
+          fluencyScore: latestProgress.metrics.fluencyScore,
+          pronunciationScore: latestProgress.metrics.pronunciationScore,
+          weaknesses: latestProgress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
+          goals: latestProgress.profile.goals,
       } : undefined);
       setLastSource(response.source || null);
-      setLastCorrection(response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null);
+          const correctionText = response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null;
       setLastPronunciationHint(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null" ? response.pronunciationHint : null);
-      const hasCorrection = Boolean(response.correction && response.correction.toLowerCase() !== "null");
+          const hasCorrection = Boolean(correctionText);
       const hasPronunciationHint = Boolean(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null");
-      if (!progress?.profile.level && response.capturedLevel) {
+      if (!latestProgress?.profile.level && response.capturedLevel) {
         await setProfileLevelFromChat(response.capturedLevel);
       }
-      if (!progress?.profile.name?.trim() && response.capturedName) {
-        await setProfileNameFromChat(response.capturedName);
+        if (!latestProgress?.profile.name?.trim() && response.capturedName) {
+          await setProfileNameFromChat(response.capturedName);
       }
       const suggestedTopic = (response.suggestedGoal || "").trim();
       if (suggestedTopic) {
@@ -208,10 +269,16 @@ export function ChatScreen() {
       // Phase can advance but never revert to setup
       if (response.phase === "practice") setPhase("practice");
 
-      setMessages((current) => [
-        ...current,
-        { id: `${Date.now()}-a`, role: "assistant", text: response.reply },
-      ]);
+      setMessages((current) => {
+        const withCorrection = correctionText
+          ? current.map((item) => item.id === userMessageId ? { ...item, correctionHint: correctionText } : item)
+          : current;
+
+        return [
+          ...withCorrection,
+          { id: `${Date.now()}-a`, role: "assistant", text: response.reply },
+        ];
+      });
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
 
       await updateGoal(response.suggestedGoal);
@@ -243,7 +310,7 @@ export function ChatScreen() {
         }
       } catch (e) {
         console.error("[Mic] transcription error:", e);
-        setError(`No se pudo transcribir el audio. Backend esperado en ${env.apiBaseUrl}. ${e instanceof Error ? e.message : String(e)}`);
+        setError(getFriendlyTranscriptionError(e));
       } finally {
         setIsTranscribing(false);
       }
@@ -302,6 +369,13 @@ export function ChatScreen() {
     } finally {
       setLookupLoading(false);
     }
+  }
+
+  function onToggleCorrection(messageId: string) {
+    setMessages((current) => current.map((item) => {
+      if (item.id !== messageId || !item.correctionHint) return item;
+      return { ...item, correctionExpanded: !item.correctionExpanded };
+    }));
   }
 
   return (
@@ -388,7 +462,7 @@ export function ChatScreen() {
               <Text style={styles.bubbleText}>
                 {item.text.split(/(\s+)/).map((part, index) => {
                   const cleaned = cleanLookupToken(part);
-                  if (!cleaned) {
+                  if (!cleaned || isLikelySpanish(cleaned)) {
                     return <Text key={`${item.id}-${index}`}>{part}</Text>;
                   }
 
@@ -406,17 +480,30 @@ export function ChatScreen() {
                 })}
               </Text>
             ) : (
-              <Text style={styles.bubbleText}>{item.text}</Text>
+              <>
+                <Text style={styles.bubbleText}>{item.text}</Text>
+                {item.correctionHint && (
+                  <View style={styles.correctionHintWrap}>
+                    <Pressable
+                      style={[styles.correctionHintChip, item.correctionExpanded && styles.correctionHintChipActive]}
+                      onPress={() => onToggleCorrection(item.id)}
+                    >
+                      <Text style={styles.correctionHintChipText}>
+                        {item.correctionExpanded ? "Ocultar corrección" : "Ver corrección"}
+                      </Text>
+                    </Pressable>
+                    {item.correctionExpanded && (
+                      <View style={styles.correctionHintPanel}>
+                        <Text style={styles.correctionHintTitle}>Sugerencia del tutor</Text>
+                        <Text style={styles.correctionHintText}>{item.correctionHint}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </>
             )}
           </View>
         ))}
-
-        {lastCorrection && (
-          <View style={styles.correctionBox}>
-            <Text style={styles.correctionLabel}>Corrección</Text>
-            <Text style={styles.correctionText}>{lastCorrection}</Text>
-          </View>
-        )}
         {lastPronunciationHint && (
           <View style={styles.pronunciationBox}>
             <Text style={styles.pronunciationLabel}>🗣 Pronunciación</Text>
@@ -433,163 +520,185 @@ export function ChatScreen() {
             {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
           </Text>
         )}
-        <Pressable
-          style={[styles.lookupToggle, lookupOpen && styles.lookupToggleActive]}
-          onPress={() => {
-            setLookupOpen((current) => !current);
-            setLookupError(null);
-          }}
-        >
-          <Text style={[styles.lookupToggleText, lookupOpen && styles.lookupToggleTextActive]}>Diccionario rápido</Text>
-        </Pressable>
-        {lookupOpen && (
-          <View style={styles.lookupCard}>
-            <Text style={styles.lookupTitle}>Buscar palabra o frase</Text>
-            {recentLookups.length > 0 && (
-              <View style={styles.lookupHistoryBlock}>
-                <View style={styles.lookupHistoryHeader}>
-                  <Text style={styles.lookupHint}>Recientes</Text>
-                  <Pressable
-                    onPress={() => {
-                      void clearLookupHistory();
-                      setLookupResult(null);
-                      setLookupError(null);
-                    }}
-                  >
-                    <Text style={styles.lookupClearText}>Limpiar</Text>
-                  </Pressable>
-                </View>
-
-                {recentLookupWords.length > 0 && (
-                  <View style={styles.lookupHistoryGroup}>
-                    <Text style={styles.lookupGroupTitle}>Palabras</Text>
-                    <View style={styles.lookupHistoryRow}>
-                      {recentLookupWords.map((term) => (
-                        <Pressable
-                          key={`recent-word-${term}`}
-                          style={styles.lookupHistoryChip}
-                          onPress={() => {
-                            setLookupQuery(term);
-                            setLookupResult(null);
-                            setLookupError(null);
-                            void (async () => {
-                              setLookupLoading(true);
-                              try {
-                                const result = await lookupTutorTerm(term, progress?.profile.level);
-                                setLookupResult(result);
-                                await recordLookupTerm(term);
-                              } catch (lookupIssue) {
-                                setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
-                              } finally {
-                                setLookupLoading(false);
-                              }
-                            })();
-                          }}
-                        >
-                          <Text style={styles.lookupHistoryChipText}>{term}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {recentLookupPhrases.length > 0 && (
-                  <View style={styles.lookupHistoryGroup}>
-                    <Text style={styles.lookupGroupTitle}>Frases</Text>
-                    <View style={styles.lookupHistoryRow}>
-                      {recentLookupPhrases.map((term) => (
-                        <Pressable
-                          key={`recent-phrase-${term}`}
-                          style={styles.lookupHistoryChip}
-                          onPress={() => {
-                            setLookupQuery(term);
-                            setLookupResult(null);
-                            setLookupError(null);
-                            void (async () => {
-                              setLookupLoading(true);
-                              try {
-                                const result = await lookupTutorTerm(term, progress?.profile.level);
-                                setLookupResult(result);
-                                await recordLookupTerm(term);
-                              } catch (lookupIssue) {
-                                setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
-                              } finally {
-                                setLookupLoading(false);
-                              }
-                            })();
-                          }}
-                        >
-                          <Text style={styles.lookupHistoryChipText}>{term}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                )}
-              </View>
-            )}
-            <TextInput
-              value={lookupQuery}
-              onChangeText={setLookupQuery}
-              placeholder="Ej: though, take off, meeting"
-              placeholderTextColor={theme.colors.muted}
-              style={styles.lookupInput}
-            />
-            <Pressable
-              style={[styles.lookupButton, (!lookupQuery.trim() || lookupLoading) && styles.buttonDisabled]}
-              disabled={!lookupQuery.trim() || lookupLoading}
-              onPress={() => {
-                void onLookupPress();
-              }}
-            >
-              <Text style={styles.lookupButtonText}>{lookupLoading ? "Buscando..." : "Consultar"}</Text>
-            </Pressable>
-            {lookupError && <Text style={styles.error}>{lookupError}</Text>}
-            {lookupResult && (
-              <View style={styles.lookupResult}>
-                <Text style={styles.lookupWord}>{lookupResult.term}</Text>
-                <Text style={styles.lookupTranslation}>{lookupResult.translation}</Text>
-                <Text style={styles.lookupExplanation}>{lookupResult.explanation}</Text>
-                {lookupResult.pronunciation ? (
-                  <Text style={styles.lookupPronunciation}>Pronunciación: {lookupResult.pronunciation}</Text>
-                ) : null}
-                <Text style={styles.lookupExample}>Ejemplo: {lookupResult.example}</Text>
-              </View>
-            )}
-          </View>
-        )}
         <View style={styles.inputRow}>
           <TextInput
             value={message}
             onChangeText={setMessage}
-            placeholder={phase === "setup"
-              ? "Respondé en español..."
-              : beginnerMode
-                ? "Podés responder en español o con frases cortas en inglés..."
-                : "Write in English..."}
+            onFocus={() => {
+              scrollToLatest(false);
+              setTimeout(() => scrollToLatest(true), 80);
+            }}
+            placeholder=""
             placeholderTextColor={theme.colors.muted}
             style={styles.input}
             multiline
           />
           <Pressable
-            style={[styles.micBtn, recording && styles.micBtnActive]}
-            onPress={onMicPress}
-            disabled={loading || isTranscribing}
+            style={[
+              styles.actionBtn,
+              hasTypedMessage && styles.actionBtnSend,
+              recording && styles.actionBtnRecording,
+              actionDisabled && styles.buttonDisabled,
+            ]}
+            onPress={() => {
+              if (hasTypedMessage) {
+                void onSend();
+                return;
+              }
+              void onMicPress();
+            }}
+            disabled={actionDisabled}
           >
-            <Text style={styles.micBtnText}>
-              {isTranscribing ? "⏳" : recording ? "⏹" : "🎤"}
+            <Text style={styles.actionBtnText}>
+              {isTranscribing ? "⏳" : hasTypedMessage ? "➤" : recording ? "⏹" : "🎤"}
             </Text>
           </Pressable>
         </View>
-        <Pressable
-          style={[styles.button, (loading || isTranscribing) && styles.buttonDisabled]}
-          onPress={() => {
-            void onSend();
-          }}
-          disabled={loading || isTranscribing}
-        >
-          <Text style={styles.buttonText}>{loading ? "Enviando..." : "Enviar"}</Text>
-        </Pressable>
       </View>
+
+      {/* Dictionary FAB */}
+      <Pressable
+        style={[styles.lookupFab, lookupOpen && styles.lookupFabActive]}
+        onPress={() => {
+          setLookupOpen((v) => !v);
+          setLookupError(null);
+        }}
+      >
+        <Text style={styles.lookupFabText}>📖</Text>
+      </Pressable>
+
+      {/* Dictionary floating panel */}
+      <Modal
+        visible={lookupOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setLookupOpen(false)}
+      >
+        <Pressable style={styles.lookupBackdrop} onPress={() => setLookupOpen(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+            <View style={styles.lookupFloatingCard} onStartShouldSetResponder={() => true}>
+              <View style={styles.lookupDragHandle} />
+              <Text style={styles.lookupTitle}>Diccionario rápido</Text>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.lookupScrollContent}
+              >
+                {recentLookups.length > 0 && (
+                  <View style={styles.lookupHistoryBlock}>
+                    <View style={styles.lookupHistoryHeader}>
+                      <Text style={styles.lookupHint}>Recientes</Text>
+                      <Pressable
+                        onPress={() => {
+                          void clearLookupHistory();
+                          setLookupResult(null);
+                          setLookupError(null);
+                        }}
+                      >
+                        <Text style={styles.lookupClearText}>Limpiar</Text>
+                      </Pressable>
+                    </View>
+
+                    {recentLookupWords.length > 0 && (
+                      <View style={styles.lookupHistoryGroup}>
+                        <Text style={styles.lookupGroupTitle}>Palabras</Text>
+                        <View style={styles.lookupHistoryRow}>
+                          {recentLookupWords.map((term) => (
+                            <Pressable
+                              key={`recent-word-${term}`}
+                              style={styles.lookupHistoryChip}
+                              onPress={() => {
+                                setLookupQuery(term);
+                                setLookupResult(null);
+                                setLookupError(null);
+                                void (async () => {
+                                  setLookupLoading(true);
+                                  try {
+                                    const result = await lookupTutorTerm(term, progress?.profile.level);
+                                    setLookupResult(result);
+                                    await recordLookupTerm(term);
+                                  } catch (lookupIssue) {
+                                    setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
+                                  } finally {
+                                    setLookupLoading(false);
+                                  }
+                                })();
+                              }}
+                            >
+                              <Text style={styles.lookupHistoryChipText}>{term}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+
+                    {recentLookupPhrases.length > 0 && (
+                      <View style={styles.lookupHistoryGroup}>
+                        <Text style={styles.lookupGroupTitle}>Frases</Text>
+                        <View style={styles.lookupHistoryRow}>
+                          {recentLookupPhrases.map((term) => (
+                            <Pressable
+                              key={`recent-phrase-${term}`}
+                              style={styles.lookupHistoryChip}
+                              onPress={() => {
+                                setLookupQuery(term);
+                                setLookupResult(null);
+                                setLookupError(null);
+                                void (async () => {
+                                  setLookupLoading(true);
+                                  try {
+                                    const result = await lookupTutorTerm(term, progress?.profile.level);
+                                    setLookupResult(result);
+                                    await recordLookupTerm(term);
+                                  } catch (lookupIssue) {
+                                    setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
+                                  } finally {
+                                    setLookupLoading(false);
+                                  }
+                                })();
+                              }}
+                            >
+                              <Text style={styles.lookupHistoryChipText}>{term}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                )}
+                <TextInput
+                  value={lookupQuery}
+                  onChangeText={setLookupQuery}
+                  placeholder="Ej: though, take off, meeting"
+                  placeholderTextColor={theme.colors.muted}
+                  style={styles.lookupInput}
+                />
+                <Pressable
+                  style={[styles.lookupButton, (!lookupQuery.trim() || lookupLoading) && styles.buttonDisabled]}
+                  disabled={!lookupQuery.trim() || lookupLoading}
+                  onPress={() => {
+                    void onLookupPress();
+                  }}
+                >
+                  <Text style={styles.lookupButtonText}>{lookupLoading ? "Buscando..." : "Consultar"}</Text>
+                </Pressable>
+                {lookupError && <Text style={styles.error}>{lookupError}</Text>}
+                {lookupResult && (
+                  <View style={styles.lookupResult}>
+                    <Text style={styles.lookupWord}>{lookupResult.term}</Text>
+                    <Text style={styles.lookupTranslation}>{lookupResult.translation}</Text>
+                    <Text style={styles.lookupExplanation}>{lookupResult.explanation}</Text>
+                    {lookupResult.pronunciation ? (
+                      <Text style={styles.lookupPronunciation}>Pronunciación: {lookupResult.pronunciation}</Text>
+                    ) : null}
+                    <Text style={styles.lookupExample}>Ejemplo: {lookupResult.example}</Text>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -721,6 +830,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  correctionHintWrap: {
+    marginTop: 8,
+    gap: 6,
+  },
+  correctionHintChip: {
+    alignSelf: "flex-start",
+    backgroundColor: "#ffeb3b",
+    borderColor: "#fbc02d",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  correctionHintChipActive: {
+    backgroundColor: "#ffd54f",
+  },
+  correctionHintChipText: {
+    color: "#5d4037",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  correctionHintPanel: {
+    backgroundColor: "#fff8e1",
+    borderColor: "#fbc02d",
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 8,
+    gap: 4,
+  },
+  correctionHintTitle: {
+    color: "#8d6e63",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  correctionHintText: {
+    color: theme.colors.text,
+    fontSize: 12,
+    lineHeight: 16,
+  },
   lookupInlineWord: {
     textDecorationLine: "underline",
     textDecorationColor: theme.colors.accent,
@@ -742,34 +890,54 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: 11,
   },
-  lookupToggle: {
-    alignSelf: "flex-start",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: theme.colors.panel,
+  lookupFab: {
+    position: "absolute",
+    right: 16,
+    bottom: 186,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    zIndex: 10,
   },
-  lookupToggleActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
+  lookupFabActive: {
+    backgroundColor: "#005c6e",
   },
-  lookupToggleText: {
-    color: theme.colors.text,
-    fontSize: 12,
-    fontWeight: "600",
+  lookupFabText: {
+    fontSize: 22,
   },
-  lookupToggleTextActive: {
-    color: theme.colors.accent,
+  lookupBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    justifyContent: "flex-end",
   },
-  lookupCard: {
-    backgroundColor: theme.colors.panel,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 10,
-    gap: 8,
+  lookupFloatingCard: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    maxHeight: "72%" as unknown as number,
+  },
+  lookupDragHandle: {
+    alignSelf: "center",
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.border,
+    marginBottom: 10,
+  },
+  lookupScrollContent: {
+    gap: 10,
+    paddingBottom: 4,
   },
   lookupTitle: {
     color: theme.colors.text,
@@ -890,7 +1058,7 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     fontSize: 14,
   },
-  micBtn: {
+  actionBtn: {
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -898,24 +1066,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  micBtnActive: {
+  actionBtnSend: {
+    backgroundColor: theme.colors.accent,
+  },
+  actionBtnRecording: {
     backgroundColor: "#e53935",
   },
-  micBtnText: {
+  actionBtnText: {
     fontSize: 20,
-  },
-  button: {
-    backgroundColor: theme.colors.accent,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
   },
   buttonDisabled: {
     opacity: 0.6,
-  },
-  buttonText: {
-    color: "#ffffff",
-    fontWeight: "600",
   },
   practiceBadge: {
     backgroundColor: "#e3f2fd",
@@ -930,23 +1091,6 @@ const styles = StyleSheet.create({
     color: "#1565c0",
     fontSize: 12,
     fontWeight: "600" as const,
-  },
-  correctionBox: {
-    backgroundColor: "#fff3cd",
-    borderRadius: 10,
-    padding: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: "#f0a500",
-  },
-  correctionLabel: {
-    fontWeight: "700" as const,
-    fontSize: 12,
-    color: "#7d5200",
-    marginBottom: 2,
-  },
-  correctionText: {
-    color: "#5c3d00",
-    fontSize: 13,
   },
   pronunciationBox: {
     backgroundColor: "#ede7f6",

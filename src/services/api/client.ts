@@ -36,6 +36,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 }
 
 export type TutorLearnerProfile = {
+  name?: string;
   level?: string;
   grammarAccuracy?: number;
   fluencyScore?: number;

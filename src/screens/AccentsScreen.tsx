@@ -79,6 +79,91 @@ function formatDayKey(isoDate: string): string {
   return isoDate.slice(0, 10);
 }
 
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function mergeRetryIntoAssessment(
+  previous: PronunciationAssessmentResponse,
+  retriedWord: string,
+  retryScore: number,
+): PronunciationAssessmentResponse {
+  const normalizedRetryWord = normalizeWordToken(retriedWord);
+  if (!normalizedRetryWord) return previous;
+
+  const retryPassed = retryScore >= 75;
+  const alreadyMatched = previous.transcriptWords.some((word) => normalizeWordToken(word) === normalizedRetryWord);
+  const nextTranscriptWords = retryPassed && !alreadyMatched
+    ? [...previous.transcriptWords, normalizedRetryWord]
+    : previous.transcriptWords;
+
+  const nextMissedWords = retryPassed
+    ? previous.missedWords.filter((word) => normalizeWordToken(word) !== normalizedRetryWord)
+    : previous.missedWords;
+
+  const blendedScore = retryPassed
+    ? previous.accuracyScore * 0.8 + retryScore * 0.2
+    : previous.accuracyScore * 0.9 + retryScore * 0.1;
+
+  const improvedSummary = retryPassed
+    ? `Buen reintento en "${retriedWord}". Se actualizó la evaluación general.`
+    : `Reintento registrado para "${retriedWord}". Seguimos practicando ese sonido.`;
+
+  const nextImprovements = retryPassed
+    ? previous.improvements.filter((tip) => !tip.toLowerCase().includes(normalizedRetryWord))
+    : previous.improvements;
+
+  return {
+    ...previous,
+    accuracyScore: clampScore(blendedScore),
+    transcriptWords: nextTranscriptWords,
+    missedWords: nextMissedWords,
+    summary: improvedSummary,
+    improvements: nextImprovements.length > 0 ? nextImprovements : previous.improvements,
+  };
+}
+
+function getFriendlyPronunciationError(error: unknown, context: "phrase" | "word" | "routine"): string {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes("empty") ||
+    normalized.includes("no speech") ||
+    normalized.includes("silence") ||
+    normalized.includes("failed: 400")
+  ) {
+    return context === "phrase"
+      ? "No detectamos voz en tu intento. Probá de nuevo diciendo la frase completa cerca del micrófono."
+      : "No detectamos voz en tu intento. Probá de nuevo pronunciando la palabra en voz clara.";
+  }
+
+  if (normalized.includes("network") || normalized.includes("fetch") || normalized.includes("timeout")) {
+    return "No pudimos evaluar por un problema de conexión. Revisá internet e intentá nuevamente.";
+  }
+
+  if (context === "phrase") return "No pudimos evaluar tu pronunciación en este intento. Probá de nuevo.";
+  if (context === "routine") return "No pudimos evaluar esta palabra de la rutina. Intentá nuevamente.";
+  return "No pudimos evaluar la palabra seleccionada. Intentá nuevamente.";
+}
+
+function getFriendlyRecordingStartError(error: unknown, context: "phrase" | "word" | "routine"): string {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  const normalized = raw.toLowerCase();
+
+  if (normalized.includes("permission") || normalized.includes("not allowed")) {
+    return "No tenemos permiso de micrófono. Activá el permiso e intentá nuevamente.";
+  }
+
+  if (normalized.includes("audio mode") || normalized.includes("busy") || normalized.includes("interrupted")) {
+    return "No pudimos iniciar la grabación porque el audio del dispositivo está ocupado. Probá otra vez en unos segundos.";
+  }
+
+  if (context === "phrase") return "No pudimos iniciar la grabación para evaluar la frase.";
+  if (context === "routine") return "No pudimos iniciar la grabación para la rutina diaria.";
+  return "No pudimos iniciar la grabación de la palabra.";
+}
+
 function computePracticeStreak(days: string[]): number {
   if (days.length === 0) return 0;
 
@@ -114,7 +199,8 @@ export function AccentsScreen() {
   const [shadowIndex, setShadowIndex] = useState(0);
   const [customText, setCustomText] = useState("Hello! I am learning English pronunciation.");
   const [customAccent, setCustomAccent] = useState<Accent>("US");
-  const [boosted, setBoosted] = useState<Record<Accent, boolean>>({ US: false, UK: false, AU: false, CA: false });
+  const [playedThisPhrase, setPlayedThisPhrase] = useState<Record<Accent, boolean>>({ US: false, UK: false, AU: false, CA: false });
+  const [practicedThisPhrase, setPracticedThisPhrase] = useState<Record<Accent, boolean>>({ US: false, UK: false, AU: false, CA: false });
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isAssessing, setIsAssessing] = useState(false);
   const [assessment, setAssessment] = useState<PronunciationAssessmentResponse | null>(null);
@@ -135,27 +221,37 @@ export function AccentsScreen() {
   const shadowPhrases = SHADOWING_PHRASES[shadowLevel];
   const currentShadowPhrase = shadowPhrases[shadowIndex];
 
+  function resetAccentPracticeCycle() {
+    setPlayedThisPhrase({ US: false, UK: false, AU: false, CA: false });
+    setPracticedThisPhrase({ US: false, UK: false, AU: false, CA: false });
+  }
+
   function playAccent(accent: Accent) {
     Speech.stop();
     setPlaying(accent);
+    setPlayedThisPhrase((prev) => ({ ...prev, [accent]: true }));
     Speech.speak(currentPhrase, {
       language: ACCENT_META[accent].locale,
       rate: 0.9,
       pitch: 1,
-      onDone: () => setPlaying(null),
+      onDone: () => {
+        setPlaying(null);
+        void onPracticed(accent);
+      },
       onError: () => setPlaying(null),
     });
   }
 
   async function onPracticed(accent: Accent) {
+    if (!playedThisPhrase[accent] || practicedThisPhrase[accent]) return;
     await boostListening(accent);
-    setBoosted((prev) => ({ ...prev, [accent]: true }));
-    setTimeout(() => setBoosted((prev) => ({ ...prev, [accent]: false })), 2000);
+    setPracticedThisPhrase((prev) => ({ ...prev, [accent]: true }));
   }
 
   function nextPhrase() {
     Speech.stop();
     setPlaying(null);
+    resetAccentPracticeCycle();
     setPhraseIndex((i) => (i + 1) % phrases.length);
   }
 
@@ -236,7 +332,7 @@ export function AccentsScreen() {
         }));
         await recordPronunciationWordAttempts(attempts);
       } catch (error) {
-        setAssessmentError(error instanceof Error ? error.message : "No se pudo evaluar la pronunciación.");
+        setAssessmentError(getFriendlyPronunciationError(error, "phrase"));
       } finally {
         setIsAssessing(false);
       }
@@ -257,7 +353,7 @@ export function AccentsScreen() {
       setAssessment(null);
       setRecording(newRecording);
     } catch (error) {
-      setAssessmentError(error instanceof Error ? error.message : "No se pudo iniciar la grabación.");
+      setAssessmentError(getFriendlyRecordingStartError(error, "phrase"));
     }
   }
 
@@ -295,8 +391,12 @@ export function AccentsScreen() {
         setWordAssessment(result);
         await recordPronunciationPractice(result.accuracyScore, customAccent);
         await recordPronunciationWordAttempt(normalizeWordToken(selectedWord), result.accuracyScore, customAccent);
+        setAssessment((prev) => {
+          if (!prev) return prev;
+          return mergeRetryIntoAssessment(prev, selectedWord, result.accuracyScore);
+        });
       } catch (error) {
-        setWordAssessmentError(error instanceof Error ? error.message : "No se pudo evaluar la palabra.");
+        setWordAssessmentError(getFriendlyPronunciationError(error, "word"));
       } finally {
         setIsWordAssessing(false);
       }
@@ -317,7 +417,7 @@ export function AccentsScreen() {
       setWordAssessment(null);
       setWordRecording(newRecording);
     } catch (error) {
-      setWordAssessmentError(error instanceof Error ? error.message : "No se pudo iniciar la grabación de palabra.");
+      setWordAssessmentError(getFriendlyRecordingStartError(error, "word"));
     }
   }
 
@@ -389,7 +489,7 @@ export function AccentsScreen() {
           setRoutineWordIndex((index) => index + 1);
         }
       } catch (error) {
-        setWordAssessmentError(error instanceof Error ? error.message : "No se pudo evaluar la palabra de la rutina.");
+        setWordAssessmentError(getFriendlyPronunciationError(error, "routine"));
       } finally {
         setIsWordAssessing(false);
       }
@@ -408,7 +508,7 @@ export function AccentsScreen() {
       const { recording: newRecording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       setWordRecording(newRecording);
     } catch (error) {
-      setWordAssessmentError(error instanceof Error ? error.message : "No se pudo iniciar la grabación de la rutina.");
+      setWordAssessmentError(getFriendlyRecordingStartError(error, "routine"));
     }
   }
 
@@ -450,7 +550,7 @@ export function AccentsScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Entrenamiento de inglés</Text>
       <Text style={styles.helper}>
-        Escuchá la misma frase en distintos acentos y entrenás tu oído. Tocá "Practiqué" después de cada escucha para registrar tu progreso.
+        Escuchá la misma frase en distintos acentos y entrená tu oído. El progreso se registra automáticamente al terminar cada reproducción.
       </Text>
 
       <View style={styles.tabRow}>
@@ -476,7 +576,13 @@ export function AccentsScreen() {
               <Pressable
                 key={lvl}
                 style={[styles.levelBtn, selectedLevel === lvl && styles.levelBtnActive]}
-                onPress={() => { setSelectedLevel(lvl); setPhraseIndex(0); Speech.stop(); setPlaying(null); }}
+                onPress={() => {
+                  setSelectedLevel(lvl);
+                  setPhraseIndex(0);
+                  resetAccentPracticeCycle();
+                  Speech.stop();
+                  setPlaying(null);
+                }}
               >
                 <Text style={[styles.levelBtnText, selectedLevel === lvl && styles.levelBtnTextActive]}>
                   {lvl.charAt(0).toUpperCase() + lvl.slice(1)}
@@ -501,7 +607,9 @@ export function AccentsScreen() {
             const pct = score;
             const barColor = pct >= 70 ? "#4caf50" : pct >= 40 ? "#ffc107" : "#f44336";
             const isPlaying = playing === accent;
-            const justBoosted = boosted[accent];
+            const isAnotherAccentPlaying = playing !== null && playing !== accent;
+            const hasPlayed = playedThisPhrase[accent];
+            const alreadyPracticed = practicedThisPhrase[accent];
 
             return (
               <View key={accent} style={styles.accentCard}>
@@ -520,18 +628,23 @@ export function AccentsScreen() {
 
                 <View style={styles.accentActions}>
                   <Pressable
-                    style={[styles.listenBtn, isPlaying && styles.listenBtnActive]}
+                    style={[styles.listenBtn, isPlaying && styles.listenBtnActive, isAnotherAccentPlaying && styles.listenBtnDisabled]}
                     onPress={() => playAccent(accent)}
+                    disabled={isAnotherAccentPlaying}
                   >
-                    <Text style={styles.listenBtnText}>{isPlaying ? "⏸ Reproduciendo..." : "▶ Escuchar"}</Text>
+                    <Text style={styles.listenBtnText}>{isPlaying ? "⏸ Reproduciendo..." : isAnotherAccentPlaying ? "Esperá..." : "▶ Escuchar"}</Text>
                   </Pressable>
-                  <Pressable
-                    style={[styles.practicedBtn, justBoosted && styles.practicedBtnDone]}
-                    onPress={() => onPracticed(accent)}
-                    disabled={justBoosted}
+                  <View
+                    style={[
+                      styles.autoStatusPill,
+                      isPlaying && styles.autoStatusPillPending,
+                      alreadyPracticed && styles.autoStatusPillDone,
+                    ]}
                   >
-                    <Text style={styles.practicedBtnText}>{justBoosted ? "✓ Registrado" : "Practiqué"}</Text>
-                  </Pressable>
+                    <Text style={styles.autoStatusText}>
+                      {alreadyPracticed ? "✓ Registrado" : isPlaying ? "Registrando al terminar..." : hasPlayed ? "Pendiente" : "Esperando escucha"}
+                    </Text>
+                  </View>
                 </View>
               </View>
             );
@@ -964,16 +1077,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   listenBtnActive: { opacity: 0.7 },
+  listenBtnDisabled: { opacity: 0.45 },
   listenBtnText: { color: theme.colors.text, fontWeight: "700", fontSize: 13 },
-  practicedBtn: {
+  autoStatusPill: {
     flex: 1,
-    backgroundColor: theme.colors.accent,
+    backgroundColor: "#eceff1",
     borderRadius: 10,
     paddingVertical: 9,
     alignItems: "center",
   },
-  practicedBtnDone: { backgroundColor: "#4caf50" },
-  practicedBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  autoStatusPillPending: { backgroundColor: "#fff8e1" },
+  autoStatusPillDone: { backgroundColor: "#e8f5e9" },
+  autoStatusText: { color: theme.colors.text, fontWeight: "700", fontSize: 12 },
   speakCard: {
     backgroundColor: theme.colors.panel,
     borderRadius: 16,
