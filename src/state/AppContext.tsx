@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { applyGoalUpdate, applySessionResult, runDiagnostic } from "../domain/learningEngine";
-import { loadProgress, saveProgress } from "../storage/progressStore";
+import { loadProgress, resetProgressStorage, saveProgress } from "../storage/progressStore";
 import { Accent, AppProgress, EnglishLevel, SessionResult } from "../types/progress";
 
 function clamp(value: number, min: number, max: number): number {
@@ -78,6 +78,7 @@ function upsertTodayMetricSnapshot(progress: AppProgress): AppProgress {
 
 type AppContextValue = {
   progress: AppProgress | null;
+  progressRef: React.MutableRefObject<AppProgress | null>;
   loading: boolean;
   updateProfile: (profile: { name: string; level: EnglishLevel }) => Promise<void>;
   setProfileLevelFromChat: (level: EnglishLevel) => Promise<void>;
@@ -102,6 +103,7 @@ type AppContextValue = {
   }) => Promise<void>;
   recordDailyRoutineCompleted: () => Promise<void>;
   markDailyGoalCompleted: () => Promise<void>;
+  resetProgress: () => Promise<void>;
 };
 
 const AppContext = createContext<AppContextValue | undefined>(undefined);
@@ -109,10 +111,12 @@ const AppContext = createContext<AppContextValue | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [progress, setProgress] = useState<AppProgress | null>(null);
   const [loading, setLoading] = useState(true);
+  const progressRef = useRef<AppProgress | null>(null);
 
   useEffect(() => {
     async function bootstrap() {
       const initial = upsertTodayMetricSnapshot(ensureTodayGoal(await loadProgress()));
+      progressRef.current = initial;
       setProgress(initial);
       await saveProgress(initial);
       setLoading(false);
@@ -123,19 +127,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   async function persist(next: AppProgress) {
     const normalized = upsertTodayMetricSnapshot(ensureTodayGoal(next));
+    progressRef.current = normalized;
     setProgress(normalized);
     await saveProgress(normalized);
   }
 
   async function updateGoal(goal: string) {
-    if (!progress) return;
-    const next = applyGoalUpdate(ensureTodayGoal(progress), goal);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const next = applyGoalUpdate(ensureTodayGoal(latest), goal);
     await persist(next);
   }
 
   async function updateProfile(profileInput: { name: string; level: EnglishLevel }) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const cleanName = profileInput.name.trim() || "Estudiante";
 
     const next: AppProgress = {
@@ -152,8 +159,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function setProfileLevelFromChat(level: EnglishLevel) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const next: AppProgress = {
       ...safeProgress,
@@ -168,8 +176,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function setProfileNameFromChat(name: string) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const cleanName = name.trim();
     if (!cleanName) return;
 
@@ -186,20 +195,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function completeSession(result: SessionResult) {
-    if (!progress) return;
-    const next = applySessionResult(ensureTodayGoal(progress), result);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const next = applySessionResult(ensureTodayGoal(latest), result);
     await persist(next);
   }
 
   async function runInitialDiagnostic() {
-    if (!progress || progress.diagnosticCompleted) return;
-    const next = runDiagnostic(ensureTodayGoal(progress));
+    const latest = progressRef.current;
+    if (!latest || latest.diagnosticCompleted) return;
+    const next = runDiagnostic(ensureTodayGoal(latest));
     await persist(next);
   }
 
   async function boostListening(accent: keyof AppProgress["metrics"]["listeningByAccent"]) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const current = safeProgress.metrics.listeningByAccent[accent];
     const boosted = Math.min(100, current + 4);
 
@@ -219,8 +231,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function recordPronunciationPractice(score: number, accent: Accent) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const pronunciationDelta = score >= 90 ? 0.6 : score >= 75 ? 0.4 : score >= 60 ? 0.2 : 0.1;
     const listeningDelta = score >= 75 ? 2 : 1;
@@ -242,8 +255,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function recordPronunciationWordAttempt(word: string, score: number, accent: Accent) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const normalizedWord = word.trim().toLowerCase();
     if (!normalizedWord) return;
@@ -284,8 +298,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function recordPronunciationWordAttempts(attempts: Array<{ word: string; score: number; accent: Accent }>) {
-    if (!progress || attempts.length === 0) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest || attempts.length === 0) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const now = new Date().toISOString();
     const map = new Map(safeProgress.pronunciationWordStats.map((item) => [item.word, item]));
@@ -332,8 +347,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function recordLookupTerm(term: string) {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const normalizedTerm = term.trim();
     if (!normalizedTerm) return;
 
@@ -350,8 +366,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function clearLookupHistory() {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const next: AppProgress = {
       ...safeProgress,
@@ -371,8 +388,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     pronunciationHintCount: number;
     source: "openai" | "gemini" | "groq" | "fallback";
   }) {
-    if (!progress || entry.turns <= 0) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest || entry.turns <= 0) return;
+    const safeProgress = ensureTodayGoal(latest);
 
     const nextEntry = {
       startedAt: entry.startedAt,
@@ -394,8 +412,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function recordDailyRoutineCompleted() {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const current = safeProgress.dailyGoal;
     const nextCompletedRoutines = Math.min(current.targetRoutines, current.completedRoutines + 1);
 
@@ -417,8 +436,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function markDailyGoalCompleted() {
-    if (!progress) return;
-    const safeProgress = ensureTodayGoal(progress);
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
     const current = safeProgress.dailyGoal;
 
     const next: AppProgress = {
@@ -435,9 +455,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
+  async function resetProgress() {
+    const cleared = await resetProgressStorage();
+    await persist(cleared);
+  }
+
   const value = useMemo(
     () => ({
       progress,
+      progressRef,
       loading,
       updateProfile,
       setProfileLevelFromChat,
@@ -454,8 +480,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       recordChatSessionSummary,
       recordDailyRoutineCompleted,
       markDailyGoalCompleted,
+      resetProgress,
     }),
-    [progress, loading],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [progress, loading, progressRef],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

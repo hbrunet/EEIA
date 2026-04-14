@@ -14,21 +14,26 @@ const LEVEL_HELP: Record<(typeof LEVELS)[number], string> = {
 };
 
 export function ProfileScreen() {
-  const { progress, updateProfile } = useAppState();
+  const { progress, updateProfile, resetProgress } = useAppState();
   const [name, setName] = useState(progress?.profile.name || "");
-  const [level, setLevel] = useState<(typeof LEVELS)[number]>(progress?.profile.level || "A2");
+  const [level, setLevel] = useState<(typeof LEVELS)[number] | null>(progress?.profile.level || null);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (!progress) return;
     setName(progress.profile.name || "");
-    setLevel(progress.profile.level || "A2");
+    setLevel(progress.profile.level || null);
   }, [progress]);
 
   async function onSave() {
     const cleanName = name.trim();
     if (!cleanName) {
       Alert.alert("Falta tu nombre", "Escribí tu nombre para personalizar el tutor.");
+      return;
+    }
+    if (!level) {
+      Alert.alert("Falta tu nivel", "Seleccioná tu nivel de inglés para personalizar el tutor.");
       return;
     }
 
@@ -39,6 +44,29 @@ export function ProfileScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function onResetPress() {
+    Alert.alert(
+      "Reiniciar progreso",
+      "Esto borra estadísticas, historial de chat y prácticas guardadas. ¿Querés continuar?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Reiniciar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setResetting(true);
+              await resetProgress();
+              Alert.alert("Progreso reiniciado", "Se restauró el estado inicial de la aplicación.");
+            } finally {
+              setResetting(false);
+            }
+          },
+        },
+      ],
+    );
   }
 
   return (
@@ -77,6 +105,14 @@ export function ProfileScreen() {
 
         <Pressable style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={onSave} disabled={saving}>
           <Text style={styles.saveBtnText}>{saving ? "Guardando..." : "Guardar perfil"}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.resetBtn, resetting && styles.saveBtnDisabled]}
+          onPress={onResetPress}
+          disabled={resetting}
+        >
+          <Text style={styles.resetBtnText}>{resetting ? "Reiniciando..." : "Reiniciar progreso (dev)"}</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -129,4 +165,14 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  resetBtn: {
+    marginTop: 4,
+    backgroundColor: "#fff3f2",
+    borderColor: "#f44336",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  resetBtnText: { color: "#c62828", fontWeight: "700", fontSize: 13 },
 });

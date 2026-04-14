@@ -3,6 +3,21 @@ import { buildDailyLesson, buildWeeklyPlan, inferWeaknesses } from "../domain/le
 import { AppProgress } from "../types/progress";
 
 const STORAGE_KEY = "eeia.progress.v1";
+const LEGACY_DEMO_METRICS = {
+  grammarAccuracy: 68,
+  listeningByAccent: {
+    US: 78,
+    UK: 61,
+    AU: 66,
+    CA: 72,
+  },
+  fluencyScore: 5,
+  pronunciationScore: 6,
+};
+const LEGACY_PROFILE_DEFAULTS = {
+  name: "learner",
+  level: "A2",
+};
 
 function getTodayKey(): string {
   return new Date().toISOString().slice(0, 10);
@@ -27,36 +42,23 @@ export const defaultProgress: AppProgress = {
   profile: {
     name: "",
     goals: ["Improve speaking confidence", "Understand multiple accents"],
-    weakAreas: ["Present perfect questions", "UK listening"],
+    weakAreas: [],
   },
   metrics: {
-    grammarAccuracy: 68,
+    grammarAccuracy: 0,
     listeningByAccent: {
-      US: 78,
-      UK: 61,
-      AU: 66,
-      CA: 72,
+      US: 0,
+      UK: 0,
+      AU: 0,
+      CA: 0,
     },
-    fluencyScore: 5,
-    pronunciationScore: 6,
+    fluencyScore: 0,
+    pronunciationScore: 0,
   },
   pronunciationWordStats: [],
   lookupHistory: [],
   chatSessionHistory: [],
-  metricHistory: [
-    {
-      dateKey: getTodayKey(),
-      grammarAccuracy: 68,
-      fluencyScore: 5,
-      pronunciationScore: 6,
-      listeningByAccent: {
-        US: 78,
-        UK: 61,
-        AU: 66,
-        CA: 72,
-      },
-    },
-  ],
+  metricHistory: [],
   dailyGoal: buildDefaultDailyGoal(),
   dailyGoalHistory: [],
   weaknesses: [],
@@ -74,14 +76,57 @@ export const defaultProgress: AppProgress = {
   lastUpdatedAt: new Date().toISOString(),
 };
 
-const seededProgress: AppProgress = {
-  ...defaultProgress,
-  weaknesses: inferWeaknesses(defaultProgress),
-  currentLesson: buildDailyLesson(defaultProgress),
-  weeklyPlan: buildWeeklyPlan(defaultProgress),
-};
+function buildBaseProgress(): AppProgress {
+  return {
+    ...defaultProgress,
+    dailyGoal: buildDefaultDailyGoal(),
+    metricHistory: [],
+    lastUpdatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildSeededProgress(): AppProgress {
+  const base = buildBaseProgress();
+  return {
+    ...base,
+    weaknesses: inferWeaknesses(base),
+    currentLesson: buildDailyLesson(base),
+    weeklyPlan: buildWeeklyPlan(base),
+  };
+}
+
+function looksLikeLegacyDemoSeed(data: Partial<AppProgress>): boolean {
+  const metrics = data.metrics;
+  const hasNoActivity =
+    (!Array.isArray(data.sessionHistory) || data.sessionHistory.length === 0) &&
+    (!Array.isArray(data.chatSessionHistory) || data.chatSessionHistory.length === 0) &&
+    (!Array.isArray(data.pronunciationWordStats) || data.pronunciationWordStats.length === 0) &&
+    (!Array.isArray(data.lookupHistory) || data.lookupHistory.length === 0);
+
+  const matchesLegacyMetrics =
+    metrics?.grammarAccuracy === LEGACY_DEMO_METRICS.grammarAccuracy &&
+    metrics?.fluencyScore === LEGACY_DEMO_METRICS.fluencyScore &&
+    metrics?.pronunciationScore === LEGACY_DEMO_METRICS.pronunciationScore &&
+    metrics?.listeningByAccent?.US === LEGACY_DEMO_METRICS.listeningByAccent.US &&
+    metrics?.listeningByAccent?.UK === LEGACY_DEMO_METRICS.listeningByAccent.UK &&
+    metrics?.listeningByAccent?.AU === LEGACY_DEMO_METRICS.listeningByAccent.AU &&
+    metrics?.listeningByAccent?.CA === LEGACY_DEMO_METRICS.listeningByAccent.CA;
+
+  const normalizedName = String(data.profile?.name || "").trim().toLowerCase();
+  const normalizedLevel = String(data.profile?.level || "").trim().toUpperCase();
+  const matchesLegacyProfileDefaults =
+    normalizedName === LEGACY_PROFILE_DEFAULTS.name &&
+    normalizedLevel === LEGACY_PROFILE_DEFAULTS.level;
+
+  const hasLegacyWeakAreas = Array.isArray(data.profile?.weakAreas)
+    ? data.profile.weakAreas.includes("Present perfect questions") && data.profile.weakAreas.includes("UK listening")
+    : false;
+
+  return hasNoActivity && (matchesLegacyMetrics || matchesLegacyProfileDefaults || hasLegacyWeakAreas);
+}
 
 function normalizeProgress(data: Partial<AppProgress>): AppProgress {
+  const seededProgress = buildSeededProgress();
   const merged: AppProgress = {
     ...seededProgress,
     ...data,
@@ -131,16 +176,25 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
 
 export async function loadProgress(): Promise<AppProgress> {
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!raw) return seededProgress;
+  if (!raw) return buildSeededProgress();
 
   try {
     const parsed = JSON.parse(raw) as Partial<AppProgress>;
+    if (looksLikeLegacyDemoSeed(parsed)) {
+      return buildSeededProgress();
+    }
     return normalizeProgress(parsed);
   } catch {
-    return seededProgress;
+    return buildSeededProgress();
   }
 }
 
 export async function saveProgress(progress: AppProgress): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+}
+
+export async function resetProgressStorage(): Promise<AppProgress> {
+  const seeded = buildSeededProgress();
+  await saveProgress(seeded);
+  return seeded;
 }

@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "server": "node server/index.js",
     "lint": "tsc --noEmit",
-    "test": "echo \"No automated tests configured yet\""
+    "test": "node --test server/*.test.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
