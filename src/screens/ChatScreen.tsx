@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Audio } from "expo-av";
-import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { lookupTutorTerm, postTutorMessage, transcribeAudio, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
@@ -18,18 +17,6 @@ type ChatMessage = {
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
-
-function accentLanguageFromTopic(topic: string): string {
-  const normalized = topic
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  if (/reino unido|british|\buk\b|ingles britanico/.test(normalized)) return "en-GB";
-  if (/australi/.test(normalized)) return "en-AU";
-  if (/irlandes|irlanda/.test(normalized)) return "en-IE";
-  if (/canada|canadiense/.test(normalized)) return "en-CA";
-  return "en-US";
-}
 
 function isBeginnerLevel(level?: string): boolean {
   const normalized = String(level || "").trim().toUpperCase();
@@ -91,7 +78,6 @@ export function ChatScreen() {
   const [lastPronunciationHint, setLastPronunciationHint] = useState<string | null>(null);
   const [phase, setPhase] = useState<"setup" | "practice">("setup");
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [selectedSuggestedTopic, setSelectedSuggestedTopic] = useState<string | null>(null);
   const [lookupOpen, setLookupOpen] = useState(false);
@@ -142,7 +128,6 @@ export function ChatScreen() {
 
   useEffect(() => {
     return () => {
-      Speech.stop();
       void finalizeChatSession();
     };
   }, []);
@@ -386,26 +371,6 @@ export function ChatScreen() {
     }
   }
 
-  function onSpeakMessage(text: string, messageId: string) {
-    if (speakingMessageId === messageId) {
-      Speech.stop();
-      setSpeakingMessageId(null);
-      return;
-    }
-    Speech.stop();
-    setSpeakingMessageId(messageId);
-    const language = accentLanguageFromTopic(
-      sessionRef.current.topic || selectedSuggestedTopic || ""
-    );
-    Speech.speak(text, {
-      language,
-      rate: 0.88,
-      onDone: () => setSpeakingMessageId(null),
-      onError: () => setSpeakingMessageId(null),
-      onStopped: () => setSpeakingMessageId(null),
-    });
-  }
-
   function onToggleCorrection(messageId: string) {
     setMessages((current) => current.map((item) => {
       if (item.id !== messageId || !item.correctionHint) return item;
@@ -494,7 +459,6 @@ export function ChatScreen() {
             style={[styles.bubble, item.role === "assistant" ? styles.assistantBubble : styles.userBubble]}
           >
             {item.role === "assistant" ? (
-              <>
               <Text style={styles.bubbleText}>
                 {item.text.split(/(\s+)/).map((part, index) => {
                   const cleaned = cleanLookupToken(part);
@@ -515,15 +479,6 @@ export function ChatScreen() {
                   );
                 })}
               </Text>
-              <View style={styles.listenRow}>
-                <Pressable
-                  style={[styles.listenBtn, speakingMessageId === item.id && styles.listenBtnActive]}
-                  onPress={() => onSpeakMessage(item.text, item.id)}
-                >
-                  <Text style={styles.listenBtnText}>{speakingMessageId === item.id ? "⏹" : "🔊"}</Text>
-                </Pressable>
-              </View>
-              </>
             ) : (
               <>
                 <Text style={styles.bubbleText}>{item.text}</Text>
@@ -1152,23 +1107,6 @@ const styles = StyleSheet.create({
   },
   pronunciationText: {
     color: "#311b92",
-    fontSize: 13,
-  },
-  listenRow: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 6,
-  },
-  listenBtn: {
-    backgroundColor: "rgba(0,0,0,0.08)",
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  listenBtnActive: {
-    backgroundColor: "#e53935",
-  },
-  listenBtnText: {
     fontSize: 13,
   },
 });
