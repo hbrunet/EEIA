@@ -82,7 +82,12 @@ export type TutorLookupResponse = {
 
 export type TranscriptionLanguage = "auto" | "en" | "es";
 
-export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "auto"): Promise<string> {
+export type TranscriptionResult = {
+  text: string;
+  avgLogprob: number | null;
+};
+
+export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "auto"): Promise<TranscriptionResult> {
   const formData = new FormData();
   formData.append("audio", {
     uri: audioUri,
@@ -106,7 +111,7 @@ export async function transcribeAudio(audioUri: string, language: TranscriptionL
 
   if (!response.ok) throw new Error(`Transcription failed: ${response.status}`);
   const data = await response.json();
-  return data.text as string;
+  return { text: data.text as string, avgLogprob: typeof data.avgLogprob === "number" ? data.avgLogprob : null };
 }
 
 export async function assessPronunciation(

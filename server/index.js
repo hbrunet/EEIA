@@ -536,9 +536,13 @@ app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
       file: fs.createReadStream(req.file.path),
       model: "whisper-large-v3",
       ...(language ? { language } : {}),
-      response_format: "json",
+      response_format: "verbose_json",
     });
-    res.json({ text: transcription.text });
+    const segments = Array.isArray(transcription.segments) ? transcription.segments : [];
+    const avgLogprob = segments.length > 0
+      ? segments.reduce((sum, s) => sum + (typeof s.avg_logprob === "number" ? s.avg_logprob : 0), 0) / segments.length
+      : null;
+    res.json({ text: transcription.text, avgLogprob });
   } catch (err) {
     console.error("Whisper transcription failed", err);
     res.status(500).json({ error: "transcription_failed", detail: err.message });

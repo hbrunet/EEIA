@@ -3,7 +3,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, Scro
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLanguage, TutorLookupResponse } from "../services/api/client";
+import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { Accent } from "../types/progress";
@@ -100,6 +100,7 @@ export function ChatScreen() {
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("auto");
+  const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [accentSelectorOpen, setAccentSelectorOpen] = useState(false);
@@ -278,6 +279,7 @@ export function ChatScreen() {
     if (!sourceText.trim()) return;
     const trimmed = sourceText.trim();
     setError(null);
+    setVoiceClarity(null);
     setLoading(true);
 
     const historyWindow = messages.slice(-CONTEXT_WINDOW).map((item) => ({
@@ -368,8 +370,11 @@ export function ChatScreen() {
         const uri = recording.getURI();
         setRecording(null);
         if (uri) {
-          const text = await transcribeAudio(uri, transcriptionLanguage);
-          setMessage(text);
+          const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
+          setMessage(result.text);
+          if (transcriptionLanguage !== "es") {
+            setVoiceClarity(result.avgLogprob);
+          }
         }
       } catch (e) {
         console.error("[Mic] transcription error:", e);
@@ -602,6 +607,20 @@ export function ChatScreen() {
             {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
           </Text>
         )}
+        {voiceClarity !== null && (() => {
+          const lp = voiceClarity;
+          const level = lp > -0.3 ? "alta" : lp > -0.55 ? "media" : "baja";
+          const color = lp > -0.3 ? "#2e7d32" : lp > -0.55 ? "#e65100" : "#b00020";
+          const bg = lp > -0.3 ? "#e8f5e9" : lp > -0.55 ? "#fff3e0" : "#fce4ec";
+          const hint = lp > -0.3 ? "excelente claridad" : lp > -0.55 ? "intentá hablar más despacio" : "difícil de entender, grabá de nuevo";
+          return (
+            <View style={[styles.clarityChip, { backgroundColor: bg, borderColor: color }]}>
+              <Text style={[styles.clarityChipText, { color }]}>
+                🗣 Claridad: {level} — {hint}
+              </Text>
+            </View>
+          );
+        })()}
         <View style={styles.transcriptionLangRow}>
           <Text style={styles.transcriptionLangLabel}>Idioma de voz:</Text>
           <View style={styles.transcriptionLangOptions}>
@@ -625,7 +644,7 @@ export function ChatScreen() {
         <View style={styles.inputRow}>
           <TextInput
             value={message}
-            onChangeText={setMessage}
+            onChangeText={(v) => { setMessage(v); setVoiceClarity(null); }}
             onFocus={() => {
               scrollToLatest(false);
               setTimeout(() => scrollToLatest(true), 80);
@@ -1165,6 +1184,17 @@ const styles = StyleSheet.create({
   sourceTag: {
     color: theme.colors.muted,
     fontSize: 11,
+  },
+  clarityChip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  clarityChipText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   transcriptionLangRow: {
     flexDirection: "row",
