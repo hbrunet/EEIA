@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Audio } from "expo-av";
+import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { lookupTutorTerm, postTutorMessage, transcribeAudio, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
+import { Accent } from "../types/progress";
 import { theme } from "../ui/theme";
 
 type ChatMessage = {
@@ -17,6 +19,12 @@ type ChatMessage = {
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
+const ACCENT_SPEECH_META: Record<Accent, { locale: string; label: string }> = {
+  US: { locale: "en-US", label: "Inglés americano" },
+  UK: { locale: "en-GB", label: "Inglés británico" },
+  AU: { locale: "en-AU", label: "Inglés australiano" },
+  CA: { locale: "en-CA", label: "Inglés canadiense" },
+};
 
 function isBeginnerLevel(level?: string): boolean {
   const normalized = String(level || "").trim().toUpperCase();
@@ -69,7 +77,7 @@ function getFriendlyTranscriptionError(error: unknown): string {
 }
 
 export function ChatScreen() {
-  const { updateGoal, progress, progressRef, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
+  const { updateGoal, progress, progressRef, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat, setPracticeAccentPreference } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +93,10 @@ export function ChatScreen() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
+  const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [accentSelectorOpen, setAccentSelectorOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const isCheckpointSavingRef = useRef(false);
   const sessionRef = useRef<{
@@ -119,6 +131,44 @@ export function ChatScreen() {
   );
   const hasTypedMessage = message.trim().length > 0;
   const actionDisabled = loading || isTranscribing;
+  const userSelectedAccent = progress?.practiceAccentPreference?.userSelectedAccent;
+  const practiceAccent: Accent = userSelectedAccent || progress?.currentLesson?.accentFocus || "US";
+  const practiceAccentMeta = ACCENT_SPEECH_META[practiceAccent];
+
+  function getSpeechOptions(accent: Accent, rate = 0.95): Speech.SpeechOptions {
+    const locale = ACCENT_SPEECH_META[accent].locale;
+    const normalizedLocale = locale.toLowerCase();
+    const voice = availableVoices.find((item) => item.language?.toLowerCase() === normalizedLocale)
+      || availableVoices.find((item) => item.language?.toLowerCase().startsWith(normalizedLocale));
+
+    return {
+      language: locale,
+      ...(voice ? { voice: voice.identifier } : {}),
+      rate,
+      pitch: 1,
+    };
+  }
+
+  function onSpeakAssistantMessage(messageId: string, text: string) {
+    const content = text.trim();
+    if (!content) return;
+
+    if (speakingMessageId === messageId) {
+      Speech.stop();
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    Speech.stop();
+    setSpeakingMessageId(messageId);
+
+    Speech.speak(content, {
+      ...getSpeechOptions(practiceAccent, 0.95),
+      onDone: () => setSpeakingMessageId(null),
+      onStopped: () => setSpeakingMessageId(null),
+      onError: () => setSpeakingMessageId(null),
+    });
+  }
 
   function scrollToLatest(animated = true) {
     requestAnimationFrame(() => {
@@ -128,8 +178,15 @@ export function ChatScreen() {
 
   useEffect(() => {
     return () => {
+      Speech.stop();
       void finalizeChatSession();
     };
+  }, []);
+
+  useEffect(() => {
+    Speech.getAvailableVoicesAsync()
+      .then((voices) => setAvailableVoices(Array.isArray(voices) ? voices : []))
+      .catch(() => setAvailableVoices([]));
   }, []);
 
   useEffect(() => {
@@ -356,6 +413,7 @@ export function ChatScreen() {
     if (!cleaned) return;
 
     setLookupOpen(true);
+    setLookupSheetExpanded(true);
     setLookupQuery(cleaned);
     setLookupResult(null);
     setLookupError(null);
@@ -405,6 +463,14 @@ export function ChatScreen() {
             <Text style={styles.practiceBadgeText}>Modo práctica activo</Text>
           </View>
         )}
+        <Pressable
+          style={[styles.accentHelperBtn, userSelectedAccent && styles.accentHelperBtnActive]}
+          onPress={() => setAccentSelectorOpen(true)}
+        >
+          <Text style={styles.accentHelper}>
+            Acento: {practiceAccentMeta.label} {userSelectedAccent ? "(manual)" : "(automático)"}
+          </Text>
+        </Pressable>
       </View>
 
       {/* Scrollable area: chat + corrección + ejercicio */}
@@ -459,26 +525,36 @@ export function ChatScreen() {
             style={[styles.bubble, item.role === "assistant" ? styles.assistantBubble : styles.userBubble]}
           >
             {item.role === "assistant" ? (
-              <Text style={styles.bubbleText}>
-                {item.text.split(/(\s+)/).map((part, index) => {
-                  const cleaned = cleanLookupToken(part);
-                  if (!cleaned || isLikelySpanish(cleaned)) {
-                    return <Text key={`${item.id}-${index}`}>{part}</Text>;
-                  }
+              <>
+                <Text style={styles.bubbleText}>
+                  {item.text.split(/(\s+)/).map((part, index) => {
+                    const cleaned = cleanLookupToken(part);
+                    if (!cleaned || isLikelySpanish(cleaned)) {
+                      return <Text key={`${item.id}-${index}`}>{part}</Text>;
+                    }
 
-                  return (
-                    <Text
-                      key={`${item.id}-${index}`}
-                      style={styles.lookupInlineWord}
-                      onPress={() => {
-                        void onAssistantWordPress(part);
-                      }}
-                    >
-                      {part}
-                    </Text>
-                  );
-                })}
-              </Text>
+                    return (
+                      <Text
+                        key={`${item.id}-${index}`}
+                        style={styles.lookupInlineWord}
+                        onPress={() => {
+                          void onAssistantWordPress(part);
+                        }}
+                      >
+                        {part}
+                      </Text>
+                    );
+                  })}
+                </Text>
+                <Pressable
+                  style={[styles.listenMessageBtn, speakingMessageId === item.id && styles.listenMessageBtnActive]}
+                  onPress={() => onSpeakAssistantMessage(item.id, item.text)}
+                >
+                  <Text style={styles.listenMessageBtnText}>
+                    {speakingMessageId === item.id ? "Detener audio" : "Escuchar mensaje"}
+                  </Text>
+                </Pressable>
+              </>
             ) : (
               <>
                 <Text style={styles.bubbleText}>{item.text}</Text>
@@ -561,6 +637,7 @@ export function ChatScreen() {
         style={[styles.lookupFab, lookupOpen && styles.lookupFabActive]}
         onPress={() => {
           setLookupOpen((v) => !v);
+          setLookupSheetExpanded(false);
           setLookupError(null);
         }}
       >
@@ -572,12 +649,38 @@ export function ChatScreen() {
         visible={lookupOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => setLookupOpen(false)}
+        onRequestClose={() => {
+          setLookupOpen(false);
+          setLookupSheetExpanded(false);
+        }}
       >
-        <Pressable style={styles.lookupBackdrop} onPress={() => setLookupOpen(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-            <View style={styles.lookupFloatingCard} onStartShouldSetResponder={() => true}>
-              <View style={styles.lookupDragHandle} />
+        <Pressable
+          style={styles.lookupBackdrop}
+          onPress={() => {
+            setLookupOpen(false);
+            setLookupSheetExpanded(false);
+          }}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.lookupSheetWrap}
+          >
+            <View
+              style={[
+                styles.lookupFloatingCard,
+                lookupSheetExpanded ? styles.lookupFloatingCardExpanded : styles.lookupFloatingCardCompact,
+              ]}
+              onStartShouldSetResponder={() => true}
+            >
+              <Pressable
+                style={styles.lookupSheetToggle}
+                onPress={() => setLookupSheetExpanded((value) => !value)}
+              >
+                <View style={styles.lookupDragHandle} />
+                <Text style={styles.lookupSheetToggleText}>
+                  {lookupSheetExpanded ? "Modo compacto" : "Expandir"}
+                </Text>
+              </Pressable>
               <Text style={styles.lookupTitle}>Diccionario rápido</Text>
               <ScrollView
                 keyboardShouldPersistTaps="handled"
@@ -699,6 +802,57 @@ export function ChatScreen() {
           </KeyboardAvoidingView>
         </Pressable>
       </Modal>
+
+      {/* Accent selector modal */}
+      <Modal
+        visible={accentSelectorOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAccentSelectorOpen(false)}
+      >
+        <Pressable style={styles.accentSelectorBackdrop} onPress={() => setAccentSelectorOpen(false)}>
+          <View style={styles.accentSelectorCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.accentSelectorTitle}>Seleccionar acento de práctica</Text>
+            <Text style={styles.accentSelectorHelper}>
+              Elegí un acento o volvé a automático. Automático elige el más débil según tu progreso.
+            </Text>
+            <View style={styles.accentSelectorOptions}>
+              {(["US", "UK", "AU", "CA"] as const).map((accent) => {
+                const selected = practiceAccent === accent;
+                return (
+                  <Pressable
+                    key={accent}
+                    style={[styles.accentSelectorOption, selected && styles.accentSelectorOptionActive]}
+                    onPress={async () => {
+                      if (userSelectedAccent === accent) {
+                        await setPracticeAccentPreference(null);
+                      } else {
+                        await setPracticeAccentPreference(accent);
+                      }
+                      setAccentSelectorOpen(false);
+                    }}
+                  >
+                    <Text style={[styles.accentSelectorOptionText, selected && styles.accentSelectorOptionTextActive]}>
+                      {ACCENT_SPEECH_META[accent].label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {userSelectedAccent && (
+              <Pressable
+                style={styles.accentSelectorResetBtn}
+                onPress={async () => {
+                  await setPracticeAccentPreference(null);
+                  setAccentSelectorOpen(false);
+                }}
+              >
+                <Text style={styles.accentSelectorResetBtnText}>Volver a automático</Text>
+              </Pressable>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -738,6 +892,83 @@ const styles = StyleSheet.create({
   helper: {
     fontSize: 13,
     color: theme.colors.muted,
+  },
+  accentHelper: {
+    fontSize: 12,
+    color: "#8a6d3b",
+  },
+  accentHelperBtn: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  accentHelperBtnActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: "#dff3f8",
+  },
+  accentSelectorBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  accentSelectorCard: {
+    backgroundColor: theme.colors.background,
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    gap: 12,
+    maxWidth: "86%",
+  },
+  accentSelectorTitle: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  accentSelectorHelper: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  accentSelectorOptions: {
+    gap: 8,
+  },
+  accentSelectorOption: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.panel,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  accentSelectorOptionActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.accent,
+  },
+  accentSelectorOptionText: {
+    color: theme.colors.text,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  accentSelectorOptionTextActive: {
+    color: "#fff",
+  },
+  accentSelectorResetBtn: {
+    marginTop: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  accentSelectorResetBtnText: {
+    color: theme.colors.muted,
+    fontWeight: "700",
+    fontSize: 12,
   },
   suggestCard: {
     backgroundColor: theme.colors.panel,
@@ -830,6 +1061,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  listenMessageBtn: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  listenMessageBtnActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: "#dff3f8",
+  },
+  listenMessageBtnText: {
+    color: theme.colors.text,
+    fontSize: 11,
+    fontWeight: "700",
+  },
   correctionHintWrap: {
     marginTop: 8,
     gap: 6,
@@ -918,14 +1168,32 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.35)",
     justifyContent: "flex-end",
   },
+  lookupSheetWrap: {
+    width: "100%",
+    justifyContent: "flex-end",
+  },
   lookupFloatingCard: {
+    width: "100%",
     backgroundColor: theme.colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 12,
     paddingHorizontal: 16,
     paddingBottom: 32,
-    maxHeight: "72%" as unknown as number,
+  },
+  lookupFloatingCardCompact: {
+    minHeight: "56%",
+    maxHeight: "62%",
+  },
+  lookupFloatingCardExpanded: {
+    minHeight: "82%",
+    maxHeight: "90%",
+  },
+  lookupSheetToggle: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+    gap: 4,
   },
   lookupDragHandle: {
     alignSelf: "center",
@@ -933,7 +1201,12 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: theme.colors.border,
-    marginBottom: 10,
+    marginBottom: 0,
+  },
+  lookupSheetToggleText: {
+    color: theme.colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
   },
   lookupScrollContent: {
     gap: 10,

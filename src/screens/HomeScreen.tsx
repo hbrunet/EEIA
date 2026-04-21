@@ -49,8 +49,6 @@ export function HomeScreen() {
   const lastChatSession = chatSessions[0] || null;
   const words = progress?.pronunciationWordStats || [];
 
-  const grammarPct = metrics?.grammarAccuracy ?? 0;
-  const fluencyPct = (metrics?.fluencyScore ?? 0) * 10;
   const pronunciationPct = Math.round((metrics?.pronunciationScore ?? 0) * 10);
   const accentEntries = Object.entries(metrics?.listeningByAccent ?? {}) as [string, number][];
   const avgAccent = accentEntries.length
@@ -151,8 +149,6 @@ export function HomeScreen() {
       <Text style={styles.sectionTitle}>Resumen rápido</Text>
       <View style={styles.statsRow}>
         {[
-          { label: "Gramática", value: grammarPct, suffix: "%" },
-          { label: "Fluidez", value: fluencyPct, suffix: "%" },
           { label: "Pronunciación", value: pronunciationPct, suffix: "%" },
           { label: "Acentos", value: avgAccent, suffix: "%" },
         ].map(({ label, value, suffix }) => {
@@ -185,7 +181,7 @@ export function HomeScreen() {
                 </View>
               ))}
             </View>
-            <Text style={styles.chartLegend}>Azul: gramática · Amarillo: fluidez · Verde: pronunciación</Text>
+            <Text style={styles.chartLegend}>Azul: pronunciación · Amarillo: listening · Verde: tendencia diaria</Text>
             {listeningDelta && (
               <Text style={styles.listeningDeltaLine}>
                 Listening semanal: US {listeningDelta.US >= 0 ? `+${listeningDelta.US}` : listeningDelta.US} · UK {listeningDelta.UK >= 0 ? `+${listeningDelta.UK}` : listeningDelta.UK} · AU {listeningDelta.AU >= 0 ? `+${listeningDelta.AU}` : listeningDelta.AU} · CA {listeningDelta.CA >= 0 ? `+${listeningDelta.CA}` : listeningDelta.CA}

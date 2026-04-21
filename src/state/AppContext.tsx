@@ -26,6 +26,13 @@ function buildDailyGoal() {
   };
 }
 
+function buildShadowingPractice() {
+  return {
+    dateKey: getTodayKey(),
+    seenPhraseKeys: [] as string[],
+  };
+}
+
 function appendGoalHistory(history: string[], dateKey: string): string[] {
   if (!dateKey) return history;
   if (history.includes(dateKey)) return history;
@@ -33,14 +40,22 @@ function appendGoalHistory(history: string[], dateKey: string): string[] {
 }
 
 function ensureTodayGoal(progress: AppProgress): AppProgress {
-  if (progress.dailyGoal?.dateKey === getTodayKey()) return progress;
+  const withShadowing = progress.shadowingPractice?.dateKey === getTodayKey()
+    ? progress
+    : {
+        ...progress,
+        shadowingPractice: buildShadowingPractice(),
+        lastUpdatedAt: new Date().toISOString(),
+      };
 
-  const history = progress.dailyGoal?.completed
-    ? appendGoalHistory(progress.dailyGoalHistory || [], progress.dailyGoal.dateKey)
-    : (progress.dailyGoalHistory || []);
+  if (withShadowing.dailyGoal?.dateKey === getTodayKey()) return withShadowing;
+
+  const history = withShadowing.dailyGoal?.completed
+    ? appendGoalHistory(withShadowing.dailyGoalHistory || [], withShadowing.dailyGoal.dateKey)
+    : (withShadowing.dailyGoalHistory || []);
 
   return {
-    ...progress,
+    ...withShadowing,
     dailyGoal: buildDailyGoal(),
     dailyGoalHistory: history,
     lastUpdatedAt: new Date().toISOString(),
@@ -101,6 +116,8 @@ type AppContextValue = {
     pronunciationHintCount: number;
     source: "openai" | "gemini" | "groq" | "fallback";
   }) => Promise<void>;
+  recordShadowingPhraseSeen: (level: "básico" | "intermedio" | "avanzado", phrase: string) => Promise<void>;
+  setPracticeAccentPreference: (accent: Accent | null) => Promise<void>;
   recordDailyRoutineCompleted: () => Promise<void>;
   markDailyGoalCompleted: () => Promise<void>;
   resetProgress: () => Promise<void>;
@@ -411,6 +428,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
+  async function recordShadowingPhraseSeen(level: "básico" | "intermedio" | "avanzado", phrase: string) {
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
+
+    const normalizedPhrase = phrase.trim().toLowerCase();
+    if (!normalizedPhrase) return;
+
+    const phraseKey = `${level}::${normalizedPhrase}`;
+    const seenPhraseKeys = safeProgress.shadowingPractice?.seenPhraseKeys || [];
+    if (seenPhraseKeys.includes(phraseKey)) return;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      shadowingPractice: {
+        dateKey: getTodayKey(),
+        seenPhraseKeys: [...seenPhraseKeys, phraseKey].slice(-300),
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
+  async function setPracticeAccentPreference(accent: Accent | null) {
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
+
+    const next: AppProgress = {
+      ...safeProgress,
+      practiceAccentPreference: {
+        dateKey: getTodayKey(),
+        userSelectedAccent: accent,
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
   async function recordDailyRoutineCompleted() {
     const latest = progressRef.current;
     if (!latest) return;
@@ -478,6 +536,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       recordLookupTerm,
       clearLookupHistory,
       recordChatSessionSummary,
+      recordShadowingPhraseSeen,
+      setPracticeAccentPreference,
       recordDailyRoutineCompleted,
       markDailyGoalCompleted,
       resetProgress,

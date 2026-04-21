@@ -2,7 +2,7 @@ import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { assessPronunciation, PronunciationAssessmentResponse } from "../services/api/client";
+import { assessPronunciation, fetchShadowingPhrases, PronunciationAssessmentResponse } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
 import { Accent } from "../types/progress";
 import { theme } from "../ui/theme";
@@ -14,42 +14,30 @@ const ACCENT_META: Record<Accent, { flag: string; name: string; locale: string; 
   CA: { flag: "🇨🇦", name: "Inglés canadiense", locale: "en-CA", description: "Mezcla de rasgos americanos y británicos, muy claro." },
 };
 
-const PHRASES: Record<string, string[]> = {
-  básico: [
-    "Hello, my name is Alex. Nice to meet you.",
-    "Can you say that again, please? I didn't understand.",
-    "What time is it? I need to be somewhere soon.",
-  ],
-  intermedio: [
-    "Could you tell me how to improve my speaking confidence in meetings?",
-    "I've been working on this project for three weeks and I'm almost done.",
-    "The weather here is quite different from what I'm used to back home.",
-  ],
-  avanzado: [
-    "The implications of this policy shift are far more nuanced than they initially appear.",
-    "She articulated her concerns with remarkable clarity despite the pressure she was under.",
-    "We ought to reconsider our approach given the feedback we've received from stakeholders.",
-  ],
-};
-
-const SHADOWING_PHRASES: Record<"básico" | "intermedio" | "avanzado", string[]> = {
+const SHADOWING_FALLBACK: Record<"básico" | "intermedio" | "avanzado", string[]> = {
   básico: [
     "Hello, good morning.",
     "My name is Sofia.",
     "I like apples.",
     "Where is the bus stop?",
+    "I need water, please.",
+    "Can you help me?",
   ],
   intermedio: [
     "I usually study English after dinner.",
     "Could you speak a little slower, please?",
     "I am getting better at pronunciation every week.",
     "I need to explain this idea clearly in my meeting.",
+    "I will send you the updated report by the end of the day.",
+    "I felt nervous at first, but then I spoke with more confidence.",
   ],
   avanzado: [
     "I would appreciate your feedback on my presentation style.",
     "The results were encouraging, although not entirely conclusive.",
     "We should prioritize clarity over complexity in this discussion.",
-    "I am aiming for a more natural rhythm and intonation.",
+    "I acknowledge your concerns; however, the long-term benefits justify the risk.",
+    "The negotiation stalled when both parties underestimated cultural nuances.",
+    "Despite the constraints, the team produced a remarkably coherent solution.",
   ],
 };
 
@@ -81,6 +69,47 @@ function formatDayKey(isoDate: string): string {
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function createShuffledIndices(length: number): number[] {
+  const indices = Array.from({ length }, (_, index) => index);
+
+  for (let index = indices.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    const temp = indices[index];
+    indices[index] = indices[randomIndex];
+    indices[randomIndex] = temp;
+  }
+
+  return indices;
+}
+
+function createShadowingPhraseKey(level: "básico" | "intermedio" | "avanzado", phrase: string): string {
+  return `${level}::${phrase.trim().toLowerCase()}`;
+}
+
+function createShadowingOrder(
+  phrases: string[],
+  level: "básico" | "intermedio" | "avanzado",
+  seenPhraseKeys: Set<string>,
+): number[] {
+  const unseenIndices: number[] = [];
+  const seenIndices: number[] = [];
+
+  phrases.forEach((phrase, index) => {
+    const key = createShadowingPhraseKey(level, phrase);
+    if (seenPhraseKeys.has(key)) {
+      seenIndices.push(index);
+      return;
+    }
+
+    unseenIndices.push(index);
+  });
+
+  const shuffledUnseen = createShuffledIndices(unseenIndices.length).map((idx) => unseenIndices[idx]);
+  const shuffledSeen = createShuffledIndices(seenIndices.length).map((idx) => seenIndices[idx]);
+
+  return [...shuffledUnseen, ...shuffledSeen];
 }
 
 function mergeRetryIntoAssessment(
@@ -184,23 +213,21 @@ function computePracticeStreak(days: string[]): number {
 export function AccentsScreen() {
   const {
     progress,
-    boostListening,
+    recordShadowingPhraseSeen,
     recordPronunciationPractice,
     recordPronunciationWordAttempts,
     recordPronunciationWordAttempt,
     recordDailyRoutineCompleted,
   } = useAppState();
   const [playing, setPlaying] = useState<Accent | null>(null);
-  const [activeTab, setActiveTab] = useState<"lab" | "speak">("lab");
   const [speakMode, setSpeakMode] = useState<"free" | "shadow">("free");
-  const [selectedLevel, setSelectedLevel] = useState<"básico" | "intermedio" | "avanzado">("intermedio");
-  const [phraseIndex, setPhraseIndex] = useState(0);
   const [shadowLevel, setShadowLevel] = useState<"básico" | "intermedio" | "avanzado">("básico");
-  const [shadowIndex, setShadowIndex] = useState(0);
+  const [shadowPhrasePool, setShadowPhrasePool] = useState<string[]>(SHADOWING_FALLBACK["básico"]);
+  const [shadowPhrasesLoading, setShadowPhrasesLoading] = useState(false);
+  const [shadowOrder, setShadowOrder] = useState<number[]>(() => createShuffledIndices(SHADOWING_FALLBACK.básico.length));
+  const [shadowCursor, setShadowCursor] = useState(0);
   const [customText, setCustomText] = useState("Hello! I am learning English pronunciation.");
   const [customAccent, setCustomAccent] = useState<Accent>("US");
-  const [playedThisPhrase, setPlayedThisPhrase] = useState<Record<Accent, boolean>>({ US: false, UK: false, AU: false, CA: false });
-  const [practicedThisPhrase, setPracticedThisPhrase] = useState<Record<Accent, boolean>>({ US: false, UK: false, AU: false, CA: false });
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isAssessing, setIsAssessing] = useState(false);
   const [assessment, setAssessment] = useState<PronunciationAssessmentResponse | null>(null);
@@ -215,44 +242,25 @@ export function AccentsScreen() {
   const [routineListened, setRoutineListened] = useState<string[]>([]);
   const [routineResults, setRoutineResults] = useState<Array<{ word: string; score: number }>>([]);
   const [routineBaselineAvg, setRoutineBaselineAvg] = useState<number>(0);
+  const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
 
-  const phrases = PHRASES[selectedLevel];
-  const currentPhrase = phrases[phraseIndex];
-  const shadowPhrases = SHADOWING_PHRASES[shadowLevel];
-  const currentShadowPhrase = shadowPhrases[shadowIndex];
+  const shadowPhrases = shadowPhrasePool;
+  const shadowPhraseIndex = shadowOrder[shadowCursor] ?? 0;
+  const currentShadowPhrase = shadowPhrases[shadowPhraseIndex] || "";
+  const seenShadowingPhraseKeys = new Set(progress?.shadowingPractice?.seenPhraseKeys || []);
 
-  function resetAccentPracticeCycle() {
-    setPlayedThisPhrase({ US: false, UK: false, AU: false, CA: false });
-    setPracticedThisPhrase({ US: false, UK: false, AU: false, CA: false });
-  }
+  function getSpeechOptions(accent: Accent, rate = 0.9): Speech.SpeechOptions {
+    const locale = ACCENT_META[accent].locale;
+    const normalizedLocale = locale.toLowerCase();
+    const voice = availableVoices.find((item) => item.language?.toLowerCase() === normalizedLocale)
+      || availableVoices.find((item) => item.language?.toLowerCase().startsWith(normalizedLocale));
 
-  function playAccent(accent: Accent) {
-    Speech.stop();
-    setPlaying(accent);
-    setPlayedThisPhrase((prev) => ({ ...prev, [accent]: true }));
-    Speech.speak(currentPhrase, {
-      language: ACCENT_META[accent].locale,
-      rate: 0.9,
+    return {
+      language: locale,
+      ...(voice ? { voice: voice.identifier } : {}),
+      rate,
       pitch: 1,
-      onDone: () => {
-        setPlaying(null);
-        void onPracticed(accent);
-      },
-      onError: () => setPlaying(null),
-    });
-  }
-
-  async function onPracticed(accent: Accent) {
-    if (!playedThisPhrase[accent] || practicedThisPhrase[accent]) return;
-    await boostListening(accent);
-    setPracticedThisPhrase((prev) => ({ ...prev, [accent]: true }));
-  }
-
-  function nextPhrase() {
-    Speech.stop();
-    setPlaying(null);
-    resetAccentPracticeCycle();
-    setPhraseIndex((i) => (i + 1) % phrases.length);
+    };
   }
 
   function playCustomText() {
@@ -262,9 +270,7 @@ export function AccentsScreen() {
     Speech.stop();
     setPlaying(customAccent);
     Speech.speak(trimmed, {
-      language: ACCENT_META[customAccent].locale,
-      rate: 0.9,
-      pitch: 1,
+      ...getSpeechOptions(customAccent, 0.9),
       onDone: () => setPlaying(null),
       onError: () => setPlaying(null),
     });
@@ -273,10 +279,11 @@ export function AccentsScreen() {
   function playShadowPhrase() {
     Speech.stop();
     setPlaying(customAccent);
+    if (currentShadowPhrase) {
+      void recordShadowingPhraseSeen(shadowLevel, currentShadowPhrase);
+    }
     Speech.speak(currentShadowPhrase, {
-      language: ACCENT_META[customAccent].locale,
-      rate: 0.88,
-      pitch: 1,
+      ...getSpeechOptions(customAccent, 0.88),
       onDone: () => setPlaying(null),
       onError: () => setPlaying(null),
     });
@@ -287,10 +294,57 @@ export function AccentsScreen() {
     setPlaying(null);
     setAssessment(null);
     setAssessmentError(null);
-    setShadowIndex((index) => (index + 1) % shadowPhrases.length);
+    if (shadowPhrases.length <= 1) return;
+
+    if (shadowCursor >= shadowOrder.length - 1) {
+      setShadowOrder(createShadowingOrder(shadowPhrases, shadowLevel, seenShadowingPhraseKeys));
+      setShadowCursor(0);
+      return;
+    }
+
+    setShadowCursor((index) => index + 1);
   }
 
   useEffect(() => {
+    const nextOrder = createShadowingOrder(shadowPhrases, shadowLevel, seenShadowingPhraseKeys);
+    setShadowOrder(nextOrder);
+    setShadowCursor(0);
+  }, [shadowPhrasePool, shadowLevel, progress?.shadowingPractice?.dateKey, progress?.shadowingPractice?.seenPhraseKeys]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setShadowPhrasesLoading(true);
+
+    const seenKeys = new Set(progress?.shadowingPractice?.seenPhraseKeys || []);
+    const recentlySeenPhrases = shadowPhrasePool.filter((p) =>
+      seenKeys.has(createShadowingPhraseKey(shadowLevel, p)),
+    );
+
+    fetchShadowingPhrases(shadowLevel, 12, recentlySeenPhrases)
+      .then((phrases) => {
+        if (!cancelled && phrases.length > 0) {
+          setShadowPhrasePool(phrases);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setShadowPhrasePool(SHADOWING_FALLBACK[shadowLevel]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setShadowPhrasesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shadowLevel]);
+
+  useEffect(() => {
+    Speech.getAvailableVoicesAsync()
+      .then((voices) => setAvailableVoices(Array.isArray(voices) ? voices : []))
+      .catch(() => setAvailableVoices([]));
+
     return () => {
       Speech.stop();
       if (recording) {
@@ -363,9 +417,7 @@ export function AccentsScreen() {
     Speech.stop();
     setPlaying(customAccent);
     Speech.speak(selectedWord, {
-      language: ACCENT_META[customAccent].locale,
-      rate: 0.82,
-      pitch: 1,
+      ...getSpeechOptions(customAccent, 0.82),
       onDone: () => setPlaying(null),
       onError: () => setPlaying(null),
     });
@@ -453,9 +505,7 @@ export function AccentsScreen() {
     Speech.stop();
     setPlaying(customAccent);
     Speech.speak(currentRoutineWord, {
-      language: ACCENT_META[customAccent].locale,
-      rate: 0.82,
-      pitch: 1,
+      ...getSpeechOptions(customAccent, 0.82),
       onDone: () => setPlaying(null),
       onError: () => setPlaying(null),
     });
@@ -520,7 +570,7 @@ export function AccentsScreen() {
         : "#f44336"
     : theme.colors.text;
 
-  const isPlayingCustom = activeTab === "speak" && playing === customAccent;
+  const isPlayingCustom = playing === customAccent;
   const wordMatches = assessment ? buildWordMatches(assessment.targetWords, assessment.transcriptWords) : [];
   const dailyRoutineWords = [...(progress?.pronunciationWordStats || [])]
     .map((item) => ({
@@ -548,112 +598,15 @@ export function AccentsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Entrenamiento de inglés</Text>
+      <Text style={styles.title}>Pronunciación</Text>
       <Text style={styles.helper}>
-        Escuchá la misma frase en distintos acentos y entrená tu oído. El progreso se registra automáticamente al terminar cada reproducción.
+        Practicá en modo libre o seguí frases guiadas con feedback inmediato de pronunciación.
       </Text>
 
-      <View style={styles.tabRow}>
-        <Pressable
-          style={[styles.tabBtn, activeTab === "lab" && styles.tabBtnActive]}
-          onPress={() => { Speech.stop(); setPlaying(null); setActiveTab("lab"); }}
-        >
-          <Text style={[styles.tabBtnText, activeTab === "lab" && styles.tabBtnTextActive]}>Escuchar acentos</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.tabBtn, activeTab === "speak" && styles.tabBtnActive]}
-          onPress={() => { Speech.stop(); setPlaying(null); setActiveTab("speak"); }}
-        >
-          <Text style={[styles.tabBtnText, activeTab === "speak" && styles.tabBtnTextActive]}>Mejorar pronunciación</Text>
-        </Pressable>
-      </View>
-
-      {activeTab === "lab" ? (
-        <>
-          {/* Selector de nivel */}
-          <View style={styles.levelRow}>
-            {(["básico", "intermedio", "avanzado"] as const).map((lvl) => (
-              <Pressable
-                key={lvl}
-                style={[styles.levelBtn, selectedLevel === lvl && styles.levelBtnActive]}
-                onPress={() => {
-                  setSelectedLevel(lvl);
-                  setPhraseIndex(0);
-                  resetAccentPracticeCycle();
-                  Speech.stop();
-                  setPlaying(null);
-                }}
-              >
-                <Text style={[styles.levelBtnText, selectedLevel === lvl && styles.levelBtnTextActive]}>
-                  {lvl.charAt(0).toUpperCase() + lvl.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* Frase actual */}
-          <View style={styles.phraseCard}>
-            <Text style={styles.phraseLabel}>Frase {phraseIndex + 1}/{phrases.length}</Text>
-            <Text style={styles.phraseText}>"{currentPhrase}"</Text>
-            <Pressable onPress={nextPhrase}>
-              <Text style={styles.nextPhrase}>Siguiente frase →</Text>
-            </Pressable>
-          </View>
-
-          {/* Cards de acentos */}
-          {ACCENTS.map((accent) => {
-            const meta = ACCENT_META[accent];
-            const score = progress?.metrics.listeningByAccent[accent] ?? 0;
-            const pct = score;
-            const barColor = pct >= 70 ? "#4caf50" : pct >= 40 ? "#ffc107" : "#f44336";
-            const isPlaying = playing === accent;
-            const isAnotherAccentPlaying = playing !== null && playing !== accent;
-            const hasPlayed = playedThisPhrase[accent];
-            const alreadyPracticed = practicedThisPhrase[accent];
-
-            return (
-              <View key={accent} style={styles.accentCard}>
-                <View style={styles.accentHeader}>
-                  <Text style={styles.accentFlag}>{meta.flag}</Text>
-                  <View style={styles.accentInfo}>
-                    <Text style={styles.accentName}>{meta.name}</Text>
-                    <Text style={styles.accentDesc}>{meta.description}</Text>
-                  </View>
-                  <Text style={[styles.accentScore, { color: barColor }]}>{score}%</Text>
-                </View>
-
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${pct}%` as any, backgroundColor: barColor }]} />
-                </View>
-
-                <View style={styles.accentActions}>
-                  <Pressable
-                    style={[styles.listenBtn, isPlaying && styles.listenBtnActive, isAnotherAccentPlaying && styles.listenBtnDisabled]}
-                    onPress={() => playAccent(accent)}
-                    disabled={isAnotherAccentPlaying}
-                  >
-                    <Text style={styles.listenBtnText}>{isPlaying ? "⏸ Reproduciendo..." : isAnotherAccentPlaying ? "Esperá..." : "▶ Escuchar"}</Text>
-                  </Pressable>
-                  <View
-                    style={[
-                      styles.autoStatusPill,
-                      isPlaying && styles.autoStatusPillPending,
-                      alreadyPracticed && styles.autoStatusPillDone,
-                    ]}
-                  >
-                    <Text style={styles.autoStatusText}>
-                      {alreadyPracticed ? "✓ Registrado" : isPlaying ? "Registrando al terminar..." : hasPlayed ? "Pendiente" : "Esperando escucha"}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            );
-          })}
-        </>
-      ) : (
-        <View style={styles.speakCard}>
-          <Text style={styles.speakTitle}>Entrenador de pronunciación</Text>
-          <Text style={styles.speakHelper}>Elegí modo libre o shadowing guiado y practicá con feedback inmediato.</Text>
+      <View style={styles.speakCard}>
+          {speakMode === "shadow" && (
+            <Text style={styles.shadowHint}>El sistema prioriza frases no vistas hoy para evitar repetición.</Text>
+          )}
 
           <View style={styles.modeRow}>
             <Pressable
@@ -724,7 +677,6 @@ export function AccentsScreen() {
                     style={[styles.levelBtn, shadowLevel === lvl && styles.levelBtnActive]}
                     onPress={() => {
                       setShadowLevel(lvl);
-                      setShadowIndex(0);
                       setAssessment(null);
                       setAssessmentError(null);
                       setSelectedWord(null);
@@ -742,13 +694,19 @@ export function AccentsScreen() {
               </View>
 
               <View style={styles.shadowCard}>
-                <Text style={styles.phraseLabel}>Frase {shadowIndex + 1}/{shadowPhrases.length}</Text>
-                <Text style={styles.phraseText}>"{currentShadowPhrase}"</Text>
+                {shadowPhrasesLoading ? (
+                  <Text style={styles.phraseLabel}>Generando frases nuevas…</Text>
+                ) : (
+                  <>
+                    <Text style={styles.phraseLabel}>Frase {shadowCursor + 1}/{shadowPhrases.length}</Text>
+                    <Text style={styles.phraseText}>"{currentShadowPhrase}"</Text>
+                  </>
+                )}
                 <View style={styles.shadowActions}>
-                  <Pressable style={styles.shadowActionBtn} onPress={playShadowPhrase}>
+                  <Pressable style={[styles.shadowActionBtn, shadowPhrasesLoading && styles.speakBtnDisabled]} onPress={playShadowPhrase} disabled={shadowPhrasesLoading}>
                     <Text style={styles.shadowActionText}>▶ Escuchar modelo</Text>
                   </Pressable>
-                  <Pressable style={styles.shadowActionBtn} onPress={nextShadowPhrase}>
+                  <Pressable style={[styles.shadowActionBtn, shadowPhrasesLoading && styles.speakBtnDisabled]} onPress={nextShadowPhrase} disabled={shadowPhrasesLoading}>
                     <Text style={styles.shadowActionText}>Siguiente frase</Text>
                   </Pressable>
                 </View>
@@ -999,8 +957,7 @@ export function AccentsScreen() {
               </View>
             </View>
           )}
-        </View>
-      )}
+      </View>
     </ScrollView>
   );
 }
@@ -1010,6 +967,7 @@ const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 40 },
   title: { fontSize: 22, fontWeight: "700", color: theme.colors.text, marginTop: 12 },
   helper: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+  voiceHint: { color: "#8a6d3b", fontSize: 12, lineHeight: 17 },
   tabRow: { flexDirection: "row", gap: 10 },
   tabBtn: {
     flex: 1,
@@ -1099,6 +1057,7 @@ const styles = StyleSheet.create({
   },
   speakTitle: { color: theme.colors.text, fontWeight: "700", fontSize: 16 },
   speakHelper: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+  shadowHint: { color: "#8a6d3b", fontSize: 12, lineHeight: 17 },
   modeRow: { flexDirection: "row", gap: 8 },
   modeBtn: {
     flex: 1,

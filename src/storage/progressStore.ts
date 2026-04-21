@@ -38,6 +38,20 @@ function buildDefaultDailyGoal() {
   };
 }
 
+function buildDefaultShadowingPractice() {
+  return {
+    dateKey: getTodayKey(),
+    seenPhraseKeys: [],
+  };
+}
+
+function buildDefaultPracticeAccentPreference() {
+  return {
+    dateKey: getTodayKey(),
+    userSelectedAccent: null,
+  };
+}
+
 export const defaultProgress: AppProgress = {
   profile: {
     name: "",
@@ -59,6 +73,8 @@ export const defaultProgress: AppProgress = {
   lookupHistory: [],
   chatSessionHistory: [],
   metricHistory: [],
+  shadowingPractice: buildDefaultShadowingPractice(),
+  practiceAccentPreference: buildDefaultPracticeAccentPreference(),
   dailyGoal: buildDefaultDailyGoal(),
   dailyGoalHistory: [],
   weaknesses: [],
@@ -80,6 +96,8 @@ function buildBaseProgress(): AppProgress {
   return {
     ...defaultProgress,
     dailyGoal: buildDefaultDailyGoal(),
+    shadowingPractice: buildDefaultShadowingPractice(),
+    practiceAccentPreference: buildDefaultPracticeAccentPreference(),
     metricHistory: [],
     lastUpdatedAt: new Date().toISOString(),
   };
@@ -160,6 +178,20 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
           },
         }))
       : seededProgress.metricHistory,
+    shadowingPractice: data.shadowingPractice && typeof data.shadowingPractice === "object"
+      ? {
+          dateKey: typeof data.shadowingPractice.dateKey === "string" ? data.shadowingPractice.dateKey : getTodayKey(),
+          seenPhraseKeys: Array.isArray(data.shadowingPractice.seenPhraseKeys)
+            ? data.shadowingPractice.seenPhraseKeys.filter((item) => typeof item === "string").slice(0, 300)
+            : [],
+        }
+      : seededProgress.shadowingPractice,
+    practiceAccentPreference: data.practiceAccentPreference && typeof data.practiceAccentPreference === "object"
+      ? {
+          dateKey: typeof data.practiceAccentPreference.dateKey === "string" ? data.practiceAccentPreference.dateKey : getTodayKey(),
+          userSelectedAccent: typeof data.practiceAccentPreference.userSelectedAccent === "string" && ["US", "UK", "AU", "CA"].includes(data.practiceAccentPreference.userSelectedAccent) ? data.practiceAccentPreference.userSelectedAccent : null,
+        }
+      : seededProgress.practiceAccentPreference,
     dailyGoalHistory: Array.isArray(data.dailyGoalHistory)
       ? data.dailyGoalHistory
       : seededProgress.dailyGoalHistory,
@@ -167,6 +199,12 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
 
   return {
     ...merged,
+    shadowingPractice: merged.shadowingPractice?.dateKey === getTodayKey()
+      ? merged.shadowingPractice
+      : buildDefaultShadowingPractice(),
+    practiceAccentPreference: merged.practiceAccentPreference?.dateKey === getTodayKey()
+      ? merged.practiceAccentPreference
+      : buildDefaultPracticeAccentPreference(),
     dailyGoal: merged.dailyGoal?.dateKey === getTodayKey() ? merged.dailyGoal : buildDefaultDailyGoal(),
     weaknesses: merged.weaknesses?.length ? merged.weaknesses : inferWeaknesses(merged),
     currentLesson: merged.currentLesson?.objective ? merged.currentLesson : buildDailyLesson(merged),

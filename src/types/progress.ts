@@ -87,6 +87,16 @@ export type MetricSnapshot = {
   listeningByAccent: Record<Accent, number>;
 };
 
+export type ShadowingPractice = {
+  dateKey: string;
+  seenPhraseKeys: string[];
+};
+
+export type PracticeAccentPreference = {
+  dateKey: string;
+  userSelectedAccent: Accent | null;
+};
+
 export type AppProgress = {
   profile: LearnerProfile;
   metrics: LessonMetric;
@@ -94,6 +104,8 @@ export type AppProgress = {
   lookupHistory: string[];
   chatSessionHistory: ChatSessionEntry[];
   metricHistory: MetricSnapshot[];
+  shadowingPractice: ShadowingPractice;
+  practiceAccentPreference: PracticeAccentPreference;
   dailyGoal: DailyGoal;
   dailyGoalHistory: string[];
   weaknesses: Weakness[];

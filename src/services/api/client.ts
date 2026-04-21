@@ -147,6 +147,18 @@ export async function postTutorMessage(
   });
 }
 
+export async function fetchShadowingPhrases(
+  level: "básico" | "intermedio" | "avanzado",
+  count = 12,
+  exclude: string[] = [],
+): Promise<string[]> {
+  const data = await apiRequest<{ phrases: string[] }>("/tutor/shadowing-phrases", {
+    method: "POST",
+    body: JSON.stringify({ level, count, exclude }),
+  });
+  return Array.isArray(data.phrases) && data.phrases.length > 0 ? data.phrases : [];
+}
+
 export async function lookupTutorTerm(
   term: string,
   learnerLevel?: string,

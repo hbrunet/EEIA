@@ -692,6 +692,136 @@ app.post("/tutor/lookup", async (req, res) => {
   }
 });
 
+const SHADOWING_FALLBACK_PHRASES = {
+  básico: [
+    "Hello, good morning.",
+    "My name is Sofia.",
+    "I like apples.",
+    "Where is the bus stop?",
+    "I need water, please.",
+    "This is my phone.",
+    "Can you help me?",
+    "I live near the station.",
+    "I am ready to start.",
+    "Today is a sunny day.",
+    "I have two brothers.",
+    "See you tomorrow.",
+  ],
+  intermedio: [
+    "I usually study English after dinner.",
+    "Could you speak a little slower, please?",
+    "I am getting better at pronunciation every week.",
+    "I need to explain this idea clearly in my meeting.",
+    "I had to reschedule the appointment because of traffic.",
+    "We can review the main points before the presentation starts.",
+    "I am trying to sound more natural when I talk to clients.",
+    "Let me know if this explanation is clear enough for everyone.",
+    "I made progress, but I still need to improve my rhythm.",
+    "I will send you the updated report by the end of the day.",
+    "Can we practice this dialogue one more time with better intonation?",
+    "I felt nervous at first, but then I spoke with more confidence.",
+  ],
+  avanzado: [
+    "I would appreciate your feedback on my presentation style.",
+    "The results were encouraging, although not entirely conclusive.",
+    "We should prioritize clarity over complexity in this discussion.",
+    "I am aiming for a more natural rhythm and intonation.",
+    "From a strategic standpoint, the proposal is sound but operationally demanding.",
+    "I acknowledge your concerns; however, the long-term benefits justify the risk.",
+    "Her argument was persuasive because it balanced evidence with practical implications.",
+    "If we frame the message carefully, we can avoid unnecessary resistance.",
+    "The negotiation stalled when both parties underestimated cultural nuances.",
+    "In hindsight, a more incremental rollout would have reduced friction.",
+    "I am refining my delivery to make complex ideas easier to follow.",
+    "Despite the constraints, the team produced a remarkably coherent solution.",
+  ],
+};
+
+app.post("/tutor/shadowing-phrases", async (req, res) => {
+  try {
+    const rawLevel = String(req.body?.level || "intermedio").trim().toLowerCase();
+    const level = ["básico", "basico", "intermedio", "avanzado"].includes(rawLevel)
+      ? rawLevel.replace("basico", "básico")
+      : "intermedio";
+    const count = Math.min(Math.max(Number(req.body?.count) || 12, 4), 20);
+    const excludePhrases = Array.isArray(req.body?.exclude)
+      ? req.body.exclude.map((p) => String(p)).filter(Boolean).slice(0, 40)
+      : [];
+
+    const fallback = SHADOWING_FALLBACK_PHRASES[level] || SHADOWING_FALLBACK_PHRASES.intermedio;
+
+    if (!groq) {
+      return res.json({ phrases: fallback, source: "fallback" });
+    }
+
+    const levelGuidance = {
+      básico: "very short, simple sentences (4-8 words). A1-A2 level. Common everyday topics: greetings, family, food, time, places. No contractions or complex grammar.",
+      intermedio: "medium-length sentences (8-15 words). B1 level. Practical topics: work, appointments, travel, opinions, routines. Mix of simple and compound sentences.",
+      avanzado: "longer, sophisticated sentences (12-20 words). B2-C1 level. Topics: professional communication, nuanced opinions, abstract ideas, negotiations, analysis.",
+    };
+
+    const excludeSection = excludePhrases.length > 0
+      ? `\nDO NOT include any of these recently used phrases (avoid repetition):\n${excludePhrases.map((p) => `- ${p}`).join("\n")}`
+      : "";
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: 0.85,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an English pronunciation coach generating shadowing practice phrases for Spanish-speaking learners. " +
+              "Shadowing phrases must be natural-sounding spoken English — the kind a native speaker would say in real life. " +
+              "Vary topics across: daily life, work, travel, emotions, social situations, phone calls, shopping, directions. " +
+              "Each phrase must be phonetically interesting for the level (e.g. for básico: clear vowels and consonants; for avanzado: connected speech, reductions, stress patterns). " +
+              "Never generate offensive, political, or culturally sensitive content. " +
+              "Respond ONLY as JSON with key: phrases (array of strings).",
+          },
+          {
+            role: "user",
+            content:
+              `Level: ${level}\n` +
+              `Guidance: ${levelGuidance[level]}\n` +
+              `Generate exactly ${count} unique shadowing phrases.\n` +
+              `Each phrase must be a single standalone sentence, written in standard English.\n` +
+              excludeSection,
+          },
+        ],
+      });
+
+      const raw = completion.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return res.json({ phrases: fallback, source: "fallback" });
+      }
+
+      const phrases = Array.isArray(parsed.phrases)
+        ? parsed.phrases
+            .map((p) => String(p || "").trim())
+            .filter((p) => p.length > 0)
+            .slice(0, count)
+        : [];
+
+      if (phrases.length < 4) {
+        return res.json({ phrases: fallback, source: "fallback" });
+      }
+
+      return res.json({ phrases, source: "groq" });
+    } catch (groqError) {
+      console.error("Shadowing phrases generation failed, using fallback", groqError);
+      return res.json({ phrases: fallback, source: "fallback" });
+    }
+  } catch (error) {
+    console.error("Shadowing phrases endpoint error", error);
+    return res.status(500).json({ error: "shadowing_phrases_failed" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Tutor API running on http://localhost:${port}`);
   console.log(`Provider: Groq | Model: ${model} | API key loaded: ${Boolean(apiKey)}`);
