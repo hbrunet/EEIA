@@ -530,10 +530,12 @@ app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "audio file required" });
 
   try {
+    const requestedLanguage = String(req.body?.language || "").trim().toLowerCase();
+    const language = requestedLanguage === "en" || requestedLanguage === "es" ? requestedLanguage : undefined;
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(req.file.path),
       model: "whisper-large-v3",
-      language: "en",
+      ...(language ? { language } : {}),
       response_format: "json",
     });
     res.json({ text: transcription.text });

@@ -3,7 +3,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, Scro
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, TutorLookupResponse } from "../services/api/client";
+import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLanguage, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { Accent } from "../types/progress";
@@ -24,6 +24,11 @@ const ACCENT_SPEECH_META: Record<Accent, { locale: string; label: string }> = {
   UK: { locale: "en-GB", label: "Inglés británico" },
   AU: { locale: "en-AU", label: "Inglés australiano" },
   CA: { locale: "en-CA", label: "Inglés canadiense" },
+};
+const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
+  auto: "Auto",
+  en: "Inglés",
+  es: "Español",
 };
 
 function isBeginnerLevel(level?: string): boolean {
@@ -94,6 +99,7 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("auto");
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [accentSelectorOpen, setAccentSelectorOpen] = useState(false);
@@ -362,7 +368,7 @@ export function ChatScreen() {
         const uri = recording.getURI();
         setRecording(null);
         if (uri) {
-          const text = await transcribeAudio(uri);
+          const text = await transcribeAudio(uri, transcriptionLanguage);
           setMessage(text);
         }
       } catch (e) {
@@ -596,6 +602,26 @@ export function ChatScreen() {
             {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
           </Text>
         )}
+        <View style={styles.transcriptionLangRow}>
+          <Text style={styles.transcriptionLangLabel}>Idioma de voz:</Text>
+          <View style={styles.transcriptionLangOptions}>
+            {(["auto", "en", "es"] as const).map((language) => {
+              const selected = transcriptionLanguage === language;
+              return (
+                <Pressable
+                  key={`transcript-lang-${language}`}
+                  style={[styles.transcriptionLangChip, selected && styles.transcriptionLangChipActive]}
+                  onPress={() => setTranscriptionLanguage(language)}
+                  disabled={isTranscribing || Boolean(recording)}
+                >
+                  <Text style={[styles.transcriptionLangChipText, selected && styles.transcriptionLangChipTextActive]}>
+                    {TRANSCRIPTION_LANGUAGE_META[language]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
         <View style={styles.inputRow}>
           <TextInput
             value={message}
@@ -1139,6 +1165,41 @@ const styles = StyleSheet.create({
   sourceTag: {
     color: theme.colors.muted,
     fontSize: 11,
+  },
+  transcriptionLangRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  transcriptionLangLabel: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  transcriptionLangOptions: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  transcriptionLangChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.panel,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  transcriptionLangChipActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: "#dff3f8",
+  },
+  transcriptionLangChipText: {
+    color: theme.colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  transcriptionLangChipTextActive: {
+    color: theme.colors.accent,
   },
   lookupFab: {
     position: "absolute",

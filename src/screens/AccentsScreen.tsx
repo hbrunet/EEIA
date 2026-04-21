@@ -277,13 +277,14 @@ export function AccentsScreen() {
   }
 
   function playShadowPhrase() {
+    const shadowAccent = recommendedShadowAccent;
     Speech.stop();
-    setPlaying(customAccent);
+    setPlaying(shadowAccent);
     if (currentShadowPhrase) {
       void recordShadowingPhraseSeen(shadowLevel, currentShadowPhrase);
     }
     Speech.speak(currentShadowPhrase, {
-      ...getSpeechOptions(customAccent, 0.88),
+      ...getSpeechOptions(shadowAccent, 0.88),
       onDone: () => setPlaying(null),
       onError: () => setPlaying(null),
     });
@@ -309,7 +310,7 @@ export function AccentsScreen() {
     const nextOrder = createShadowingOrder(shadowPhrases, shadowLevel, seenShadowingPhraseKeys);
     setShadowOrder(nextOrder);
     setShadowCursor(0);
-  }, [shadowPhrasePool, shadowLevel, progress?.shadowingPractice?.dateKey, progress?.shadowingPractice?.seenPhraseKeys]);
+  }, [shadowPhrasePool, shadowLevel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -358,6 +359,7 @@ export function AccentsScreen() {
 
   async function onPronunciationPress() {
     const targetText = speakMode === "shadow" ? currentShadowPhrase : customText.trim();
+    const accentForPractice = speakMode === "shadow" ? recommendedShadowAccent : customAccent;
     const trimmed = targetText.trim();
     if (!trimmed || isAssessing) return;
 
@@ -374,15 +376,15 @@ export function AccentsScreen() {
           throw new Error("No se pudo recuperar el audio grabado.");
         }
 
-        const result = await assessPronunciation(uri, trimmed, customAccent);
+        const result = await assessPronunciation(uri, trimmed, accentForPractice);
         setAssessment(result);
-        await recordPronunciationPractice(result.accuracyScore, customAccent);
+        await recordPronunciationPractice(result.accuracyScore, accentForPractice);
 
         const missed = new Set(result.missedWords.map((word) => normalizeWordToken(word)).filter(Boolean));
         const attempts = Array.from(new Set(result.targetWords.map((word) => normalizeWordToken(word)).filter(Boolean))).map((word) => ({
           word,
           score: missed.has(word) ? Math.max(35, Math.min(68, result.accuracyScore - 8)) : Math.max(80, result.accuracyScore),
-          accent: customAccent,
+          accent: accentForPractice,
         }));
         await recordPronunciationWordAttempts(attempts);
       } catch (error) {
@@ -570,7 +572,14 @@ export function AccentsScreen() {
         : "#f44336"
     : theme.colors.text;
 
-  const isPlayingCustom = playing === customAccent;
+  const recommendedShadowAccent = ACCENTS.reduce((weakest, current) => {
+    const weakestScore = progress?.metrics.listeningByAccent[weakest] ?? 0;
+    const currentScore = progress?.metrics.listeningByAccent[current] ?? 0;
+    return currentScore < weakestScore ? current : weakest;
+  }, "US" as Accent);
+  const activeAccent = speakMode === "shadow" ? recommendedShadowAccent : customAccent;
+
+  const isPlayingCustom = playing === activeAccent;
   const wordMatches = assessment ? buildWordMatches(assessment.targetWords, assessment.transcriptWords) : [];
   const dailyRoutineWords = [...(progress?.pronunciationWordStats || [])]
     .map((item) => ({
@@ -714,28 +723,32 @@ export function AccentsScreen() {
             </>
           )}
 
-          <View style={styles.customAccentRow}>
-            {ACCENTS.map((accent) => {
-              const selected = customAccent === accent;
-              return (
-                <Pressable
-                  key={`custom-${accent}`}
-                  style={[styles.customAccentBtn, selected && styles.customAccentBtnActive]}
-                  onPress={() => {
-                    setCustomAccent(accent);
-                    setAssessment(null);
-                    setAssessmentError(null);
-                    setSelectedWord(null);
-                    setWordAssessment(null);
-                    setWordAssessmentError(null);
-                  }}
-                >
-                  <Text style={styles.customAccentFlag}>{ACCENT_META[accent].flag}</Text>
-                  <Text style={[styles.customAccentText, selected && styles.customAccentTextActive]}>{accent}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {speakMode === "free" ? (
+            <View style={styles.customAccentRow}>
+              {ACCENTS.map((accent) => {
+                const selected = customAccent === accent;
+                return (
+                  <Pressable
+                    key={`custom-${accent}`}
+                    style={[styles.customAccentBtn, selected && styles.customAccentBtnActive]}
+                    onPress={() => {
+                      setCustomAccent(accent);
+                      setAssessment(null);
+                      setAssessmentError(null);
+                      setSelectedWord(null);
+                      setWordAssessment(null);
+                      setWordAssessmentError(null);
+                    }}
+                  >
+                    <Text style={styles.customAccentFlag}>{ACCENT_META[accent].flag}</Text>
+                    <Text style={[styles.customAccentText, selected && styles.customAccentTextActive]}>{accent}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <Text style={styles.speakAccentInfo}>Modelo recomendado: {ACCENT_META[recommendedShadowAccent].name}</Text>
+          )}
 
           <Pressable
             style={[
@@ -751,7 +764,7 @@ export function AccentsScreen() {
             </Text>
           </Pressable>
 
-          <Text style={styles.speakAccentInfo}>Acento seleccionado: {ACCENT_META[customAccent].name}</Text>
+          {speakMode === "free" && <Text style={styles.speakAccentInfo}>Acento seleccionado: {ACCENT_META[customAccent].name}</Text>}
 
           <Text style={styles.speakFootnote}>
             La evaluación usa transcripción y comparación con la frase objetivo. Sirve como guía práctica, no como diagnóstico fonético exacto.
