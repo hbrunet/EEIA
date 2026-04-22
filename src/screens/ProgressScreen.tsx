@@ -3,13 +3,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
 
-const ACCENT_FLAGS: Record<string, string> = {
-  US: "🇺🇸 US",
-  UK: "🇬🇧 UK",
-  AU: "🇦🇺 AU",
-  CA: "🇨🇦 CA",
-};
-
 const BADGE_MILESTONES = [3, 7, 14, 30];
 
 function getTodayKey(): string {
@@ -93,11 +86,6 @@ export function ProgressScreen() {
     .slice(0, 2);
 
   const pronunciationPct = Math.round(metrics.pronunciationScore * 10);
-  const accentEntries = Object.entries(metrics.listeningByAccent) as Array<[string, number]>;
-  const listeningAverage = accentEntries.length
-    ? Math.round(accentEntries.reduce((sum, [, value]) => sum + value, 0) / accentEntries.length)
-    : 0;
-  const weakestAccent = accentEntries.reduce((worst, current) => (current[1] < worst[1] ? current : worst));
 
   const history = progress.dailyGoalHistory || [];
   const currentStreak = computeCurrentStreak(history);
@@ -113,33 +101,16 @@ export function ProgressScreen() {
     ? Math.round((trendLast.pronunciationScore - trendBase.pronunciationScore) * 10)
     : 0;
 
-  const listeningTrend = trendBase && trendLast
-    ? Math.round(
-        (Object.values(trendLast.listeningByAccent).reduce((sum, value) => sum + value, 0) / 4)
-        - (Object.values(trendBase.listeningByAccent).reduce((sum, value) => sum + value, 0) / 4),
-      )
-    : 0;
 
-  const chartData = trendWindow.map((item) => {
-    const listeningAvg = Math.round((
-      item.listeningByAccent.US +
-      item.listeningByAccent.UK +
-      item.listeningByAccent.AU +
-      item.listeningByAccent.CA
-    ) / 4);
-
-    return {
-      day: item.dateKey.slice(5),
-      pronunciation: Math.round(item.pronunciationScore * 10),
-      listening: listeningAvg,
-    };
-  });
+  const chartData = trendWindow.map((item) => ({
+    day: item.dateKey.slice(5),
+    pronunciation: Math.round(item.pronunciationScore * 10),
+  }));
 
   const focusItems: string[] = [];
   if (weakestWords.length > 0) {
     focusItems.push(`Palabras: ${weakestWords.map((item) => item.word).join(", ")}`);
   }
-  focusItems.push(`Acento a reforzar: ${ACCENT_FLAGS[weakestAccent[0]] ?? weakestAccent[0]} (${weakestAccent[1]}%)`);
   focusItems.push(`Objetivo actual: ${progress.nextClassGoal || "Practicar conversación guiada"}`);
 
   const recentChats = (progress.chatSessionHistory || []).slice(0, 3);
@@ -152,7 +123,6 @@ export function ProgressScreen() {
         <Text style={styles.sectionTitle}>Resumen ejecutivo</Text>
         <View style={styles.kpiGrid}>
           <KpiCard label="Pronunciación" value={`${pronunciationPct}%`} hint="Puntaje general" />
-          <KpiCard label="Listening" value={`${listeningAverage}%`} hint="Promedio por acento" />
           <KpiCard label="Racha" value={`${currentStreak} día(s)`} hint={`Mejor: ${bestStreak}`} />
         </View>
       </View>
@@ -180,19 +150,17 @@ export function ProgressScreen() {
         {trendBase && trendLast ? (
           <>
             <Text style={styles.trendLine}>Pronunciación: {formatTrend(pronunciationTrend)} pt</Text>
-            <Text style={styles.trendLine}>Listening promedio: {formatTrend(listeningTrend)} pt</Text>
             <View style={styles.chartRow}>
               {chartData.map((item) => (
                 <View key={`trend-${item.day}`} style={styles.chartColumn}>
                   <View style={styles.chartBars}>
                     <View style={[styles.chartBar, styles.chartBarPron, { height: Math.max(4, Math.round(item.pronunciation * 0.3)) }]} />
-                    <View style={[styles.chartBar, styles.chartBarListen, { height: Math.max(4, Math.round(item.listening * 0.3)) }]} />
                   </View>
                   <Text style={styles.chartDay}>{item.day}</Text>
                 </View>
               ))}
             </View>
-            <Text style={styles.chartLegend}>Verde: pronunciación · Azul: listening promedio</Text>
+            <Text style={styles.chartLegend}>Verde: pronunciación por día</Text>
           </>
         ) : (
           <Text style={styles.empty}>Todavía no hay datos suficientes para mostrar tendencia semanal.</Text>
@@ -375,9 +343,6 @@ const styles = StyleSheet.create({
   },
   chartBarPron: {
     backgroundColor: "#43a047",
-  },
-  chartBarListen: {
-    backgroundColor: "#1e88e5",
   },
   chartDay: {
     color: theme.colors.muted,
