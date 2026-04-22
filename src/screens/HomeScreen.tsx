@@ -50,10 +50,6 @@ export function HomeScreen() {
   const words = progress?.pronunciationWordStats || [];
 
   const pronunciationPct = Math.round((metrics?.pronunciationScore ?? 0) * 10);
-  const accentEntries = Object.entries(metrics?.listeningByAccent ?? {}) as [string, number][];
-  const avgAccent = accentEntries.length
-    ? Math.round(accentEntries.reduce((s, [, v]) => s + v, 0) / accentEntries.length)
-    : 0;
   const wordsAverage = words.length
     ? Math.round(words.reduce((sum, item) => sum + item.avgScore, 0) / words.length)
     : null;
@@ -74,14 +70,6 @@ export function HomeScreen() {
   }));
   const trendBase = trendWindow.length > 1 ? trendWindow[0] : null;
   const trendLast = trendWindow.length > 0 ? trendWindow[trendWindow.length - 1] : null;
-  const listeningDelta = trendBase && trendLast
-    ? {
-        US: Math.round(trendLast.listeningByAccent.US - trendBase.listeningByAccent.US),
-        UK: Math.round(trendLast.listeningByAccent.UK - trendBase.listeningByAccent.UK),
-        AU: Math.round(trendLast.listeningByAccent.AU - trendBase.listeningByAccent.AU),
-        CA: Math.round(trendLast.listeningByAccent.CA - trendBase.listeningByAccent.CA),
-      }
-    : null;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -148,10 +136,7 @@ export function HomeScreen() {
       {/* Resumen rápido */}
       <Text style={styles.sectionTitle}>Resumen rápido</Text>
       <View style={styles.statsRow}>
-        {[
-          { label: "Pronunciación", value: pronunciationPct, suffix: "%" },
-          { label: "Acentos", value: avgAccent, suffix: "%" },
-        ].map(({ label, value, suffix }) => {
+        {[{ label: "Pronunciación", value: pronunciationPct, suffix: "%" }].map(({ label, value, suffix }) => {
           const color = value >= 70 ? "#4caf50" : value >= 40 ? "#ffc107" : "#f44336";
           return (
             <View key={label} style={styles.statCard}>
@@ -182,11 +167,6 @@ export function HomeScreen() {
               ))}
             </View>
             <Text style={styles.chartLegend}>Azul: pronunciación · Amarillo: listening · Verde: tendencia diaria</Text>
-            {listeningDelta && (
-              <Text style={styles.listeningDeltaLine}>
-                Listening semanal: US {listeningDelta.US >= 0 ? `+${listeningDelta.US}` : listeningDelta.US} · UK {listeningDelta.UK >= 0 ? `+${listeningDelta.UK}` : listeningDelta.UK} · AU {listeningDelta.AU >= 0 ? `+${listeningDelta.AU}` : listeningDelta.AU} · CA {listeningDelta.CA >= 0 ? `+${listeningDelta.CA}` : listeningDelta.CA}
-              </Text>
-            )}
           </>
         ) : (
           <Text style={styles.activityHint}>Todavía no hay datos suficientes para mostrar tendencia semanal.</Text>
@@ -379,12 +359,6 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     fontSize: 11,
   },
-  listeningDeltaLine: {
-    color: theme.colors.text,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-
   diagnosticCard: {
     backgroundColor: "#fffbeb",
     borderRadius: 16,
