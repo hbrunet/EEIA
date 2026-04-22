@@ -606,7 +606,7 @@ export function ChatScreen() {
             {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
           </Text>
         )}
-        {voiceClarity !== null && (() => {
+        {voiceClarity !== null && transcriptionLanguage === "en" && (() => {
           const lp = voiceClarity;
           const level = lp > -0.3 ? "alta" : lp > -0.55 ? "media" : "baja";
           const color = lp > -0.3 ? "#2e7d32" : lp > -0.55 ? "#e65100" : "#b00020";
@@ -629,7 +629,7 @@ export function ChatScreen() {
                 <Pressable
                   key={`transcript-lang-${language}`}
                   style={[styles.transcriptionLangChip, selected && styles.transcriptionLangChipActive]}
-                  onPress={() => setTranscriptionLanguage(language)}
+                  onPress={() => { setTranscriptionLanguage(language); setVoiceClarity(null); }}
                   disabled={isTranscribing || Boolean(recording) || loading}
                 >
                   <Text style={[styles.transcriptionLangChipText, selected && styles.transcriptionLangChipTextActive]}>
