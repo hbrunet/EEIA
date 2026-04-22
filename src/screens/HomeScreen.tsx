@@ -36,7 +36,7 @@ function formatShortDate(value: string): string {
 }
 
 export function HomeScreen() {
-  const { progress, runInitialDiagnostic, markDailyGoalCompleted } = useAppState();
+  const { progress, runInitialDiagnostic } = useAppState();
   const navigation = useNavigation<any>();
 
   const profile = progress?.profile;
@@ -49,6 +49,8 @@ export function HomeScreen() {
   const lastChatSession = chatSessions[0] || null;
   const words = progress?.pronunciationWordStats || [];
 
+  const grammarPct = Math.round(metrics?.grammarAccuracy ?? 0);
+  const fluencyPct = Math.round((metrics?.fluencyScore ?? 0) * 10);
   const pronunciationPct = Math.round((metrics?.pronunciationScore ?? 0) * 10);
   const wordsAverage = words.length
     ? Math.round(words.reduce((sum, item) => sum + item.avgScore, 0) / words.length)
@@ -131,7 +133,11 @@ export function HomeScreen() {
       {/* Resumen rápido */}
       <Text style={styles.sectionTitle}>Resumen rápido</Text>
       <View style={styles.statsRow}>
-        {[{ label: "Pronunciación", value: pronunciationPct, suffix: "%" }].map(({ label, value, suffix }) => {
+        {[
+          { label: "Gramática", value: grammarPct, suffix: "%" },
+          { label: "Fluidez", value: fluencyPct, suffix: "%" },
+          { label: "Pronunciación", value: pronunciationPct, suffix: "%" },
+        ].map(({ label, value, suffix }) => {
           const color = value >= 70 ? "#4caf50" : value >= 40 ? "#ffc107" : "#f44336";
           return (
             <View key={label} style={styles.statCard}>
@@ -161,7 +167,7 @@ export function HomeScreen() {
                 </View>
               ))}
             </View>
-            <Text style={styles.chartLegend}>Azul: pronunciación · Amarillo: listening · Verde: tendencia diaria</Text>
+            <Text style={styles.chartLegend}>Naranja: gramática · Amarillo: fluidez · Azul: pronunciación</Text>
           </>
         ) : (
           <Text style={styles.activityHint}>Todavía no hay datos suficientes para mostrar tendencia semanal.</Text>
