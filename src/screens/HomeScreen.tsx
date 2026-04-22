@@ -109,17 +109,12 @@ export function HomeScreen() {
             );
           })}
           <View style={styles.dailyGoalActions}>
-            <Pressable style={styles.dailyGoalBtn} onPress={() => navigation.navigate("Accents")}>
-              <Text style={styles.dailyGoalBtnText}>Ir a pronunciación</Text>
+            <Pressable style={styles.dailyGoalBtn} onPress={() => navigation.navigate("Chat")}>
+              <Text style={styles.dailyGoalBtnText}>Abrir chat</Text>
             </Pressable>
-            <Pressable style={[styles.dailyGoalBtn, styles.dailyGoalBtnNeutral]} onPress={() => navigation.navigate("Chat")}>
-              <Text style={styles.dailyGoalBtnTextNeutral}>Abrir chat</Text>
+            <Pressable style={[styles.dailyGoalBtn, styles.dailyGoalBtnNeutral]} onPress={() => navigation.navigate("Accents")}>
+              <Text style={styles.dailyGoalBtnTextNeutral}>Pronunciación</Text>
             </Pressable>
-            {!dailyGoal.completed && (
-              <Pressable style={[styles.dailyGoalBtn, styles.dailyGoalBtnSecondary]} onPress={markDailyGoalCompleted}>
-                <Text style={styles.dailyGoalBtnTextSecondary}>Marcar completo</Text>
-              </Pressable>
-            )}
           </View>
 
           <View style={styles.streakRow}>

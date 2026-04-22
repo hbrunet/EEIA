@@ -14,11 +14,11 @@ function getTodayKey(): string {
 function buildDailyGoal() {
   return {
     dateKey: getTodayKey(),
-    title: "Completar rutina de pronunciación",
+    title: "Practicar inglés con el tutor virtual",
     checklist: [
-      "Escuchar el circuito diario",
-      "Grabar una ronda rápida",
-      "Revisar resultado final",
+      "Mantener una conversación en el chat",
+      "Usar vocabulario nuevo",
+      "Practicar pronunciación si podés",
     ],
     targetRoutines: 1,
     completedRoutines: 0,
