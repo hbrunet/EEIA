@@ -86,6 +86,11 @@ export function ProgressScreen() {
     .slice(0, 2);
 
   const pronunciationPct = Math.round(metrics.pronunciationScore * 10);
+  const grammarPct = Math.round(metrics.grammarAccuracy);
+  const fluencyPct = Math.round(metrics.fluencyScore * 10);
+
+  const totalChatTurns = (progress.chatSessionHistory || []).reduce((sum, s) => sum + s.turns, 0);
+  const totalCorrections = (progress.chatSessionHistory || []).reduce((sum, s) => sum + s.correctionCount, 0);
 
   const history = progress.dailyGoalHistory || [];
   const currentStreak = computeCurrentStreak(history);
@@ -100,11 +105,18 @@ export function ProgressScreen() {
   const pronunciationTrend = trendBase && trendLast
     ? Math.round((trendLast.pronunciationScore - trendBase.pronunciationScore) * 10)
     : 0;
-
+  const grammarTrend = trendBase && trendLast
+    ? Math.round(trendLast.grammarAccuracy - trendBase.grammarAccuracy)
+    : 0;
+  const fluencyTrend = trendBase && trendLast
+    ? Math.round((trendLast.fluencyScore - trendBase.fluencyScore) * 10)
+    : 0;
 
   const chartData = trendWindow.map((item) => ({
     day: item.dateKey.slice(5),
     pronunciation: Math.round(item.pronunciationScore * 10),
+    grammar: Math.round(item.grammarAccuracy),
+    fluency: Math.round(item.fluencyScore * 10),
   }));
 
   const focusItems: string[] = [];
@@ -122,6 +134,8 @@ export function ProgressScreen() {
       <View style={styles.cardHero}>
         <Text style={styles.sectionTitle}>Resumen ejecutivo</Text>
         <View style={styles.kpiGrid}>
+          <KpiCard label="Gramática" value={`${grammarPct}%`} hint="Precisión en chat" />
+          <KpiCard label="Fluidez" value={`${fluencyPct}%`} hint="Score de conversación" />
           <KpiCard label="Pronunciación" value={`${pronunciationPct}%`} hint="Puntaje general" />
           <KpiCard label="Racha" value={`${currentStreak} día(s)`} hint={`Mejor: ${bestStreak}`} />
         </View>
@@ -149,21 +163,38 @@ export function ProgressScreen() {
         <Text style={styles.sectionTitle}>Tendencia semanal</Text>
         {trendBase && trendLast ? (
           <>
+            <Text style={styles.trendLine}>Gramática: {formatTrend(grammarTrend)} pt</Text>
+            <Text style={styles.trendLine}>Fluidez: {formatTrend(fluencyTrend)} pt</Text>
             <Text style={styles.trendLine}>Pronunciación: {formatTrend(pronunciationTrend)} pt</Text>
             <View style={styles.chartRow}>
               {chartData.map((item) => (
                 <View key={`trend-${item.day}`} style={styles.chartColumn}>
                   <View style={styles.chartBars}>
+                    <View style={[styles.chartBar, styles.chartBarGrammar, { height: Math.max(4, Math.round(item.grammar * 0.3)) }]} />
+                    <View style={[styles.chartBar, styles.chartBarFluency, { height: Math.max(4, Math.round(item.fluency * 0.3)) }]} />
                     <View style={[styles.chartBar, styles.chartBarPron, { height: Math.max(4, Math.round(item.pronunciation * 0.3)) }]} />
                   </View>
                   <Text style={styles.chartDay}>{item.day}</Text>
                 </View>
               ))}
             </View>
-            <Text style={styles.chartLegend}>Verde: pronunciación por día</Text>
+            <Text style={styles.chartLegend}>Naranja: gramática · Amarillo: fluidez · Verde: pronunciación</Text>
           </>
         ) : (
           <Text style={styles.empty}>Todavía no hay datos suficientes para mostrar tendencia semanal.</Text>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Estadísticas del tutor</Text>
+        <Text style={styles.contextSubtext}>Sesiones de chat: {(progress.chatSessionHistory || []).length}</Text>
+        <Text style={styles.contextSubtext}>Turnos totales de conversación: {totalChatTurns}</Text>
+        <Text style={styles.contextSubtext}>Correcciones recibidas: {totalCorrections}</Text>
+        {pronunciationStats.length > 0 && (
+          <Text style={styles.contextSubtext}>Palabras practicadas: {pronunciationStats.length}</Text>
+        )}
+        {weakestWords.length > 0 && (
+          <Text style={[styles.contextSubtext, { color: theme.colors.accent }]}>A reforzar: {weakestWords.map((w) => w.word).join(", ")}</Text>
         )}
       </View>
 
@@ -340,6 +371,12 @@ const styles = StyleSheet.create({
   chartBar: {
     width: 6,
     borderRadius: 2,
+  },
+  chartBarGrammar: {
+    backgroundColor: "#ef6c00",
+  },
+  chartBarFluency: {
+    backgroundColor: "#fdd835",
   },
   chartBarPron: {
     backgroundColor: "#43a047",
