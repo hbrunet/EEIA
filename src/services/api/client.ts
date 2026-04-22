@@ -87,7 +87,7 @@ export type TranscriptionResult = {
   avgLogprob: number | null;
 };
 
-export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "es"): Promise<TranscriptionResult> {
+export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "en"): Promise<TranscriptionResult> {
   const formData = new FormData();
   formData.append("audio", {
     uri: audioUri,

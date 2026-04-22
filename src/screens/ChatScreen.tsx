@@ -98,7 +98,7 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("es");
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
@@ -621,7 +621,7 @@ export function ChatScreen() {
           );
         })()}
         <View style={styles.transcriptionLangRow}>
-          <Text style={styles.transcriptionLangLabel}>Idioma de la voz:</Text>
+          <Text style={styles.transcriptionLangLabel}>Transcripción de voz a:</Text>
           <View style={styles.transcriptionLangOptions}>
             {(["en", "es"] as const).map((language) => {
               const selected = transcriptionLanguage === language;
