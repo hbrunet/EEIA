@@ -26,6 +26,7 @@ const ACCENT_SPEECH_META: Record<Accent, { locale: string; label: string }> = {
   CA: { locale: "en-CA", label: "Inglés canadiense" },
 };
 const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
+  auto: "Auto-detectar",
   en: "Inglés",
   es: "Español",
 };
@@ -98,7 +99,7 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("auto");
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
@@ -371,7 +372,9 @@ export function ChatScreen() {
         if (uri) {
           const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
           setMessage(result.text);
-          setVoiceClarity(result.avgLogprob);
+          if (transcriptionLanguage !== "es") {
+            setVoiceClarity(result.avgLogprob);
+          }
         }
       } catch (e) {
         console.error("[Mic] transcription error:", e);
@@ -619,9 +622,9 @@ export function ChatScreen() {
           );
         })()}
         <View style={styles.transcriptionLangRow}>
-          <Text style={styles.transcriptionLangLabel}>Transcribir audio de:</Text>
+          <Text style={styles.transcriptionLangLabel}>Idioma de la voz:</Text>
           <View style={styles.transcriptionLangOptions}>
-            {(["en", "es"] as const).map((language) => {
+            {(["auto", "en", "es"] as const).map((language) => {
               const selected = transcriptionLanguage === language;
               return (
                 <Pressable
