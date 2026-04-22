@@ -265,6 +265,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           [accent]: clamp(safeProgress.metrics.listeningByAccent[accent] + listeningDelta, 0, 100),
         },
       },
+      dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], getTodayKey()),
       lastUpdatedAt: new Date().toISOString(),
     };
 
@@ -422,6 +423,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const next: AppProgress = {
       ...safeProgress,
       chatSessionHistory: [nextEntry, ...(safeProgress.chatSessionHistory || [])].slice(0, 60),
+      dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], getTodayKey()),
       lastUpdatedAt: new Date().toISOString(),
     };
 
