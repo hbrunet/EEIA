@@ -81,7 +81,7 @@ function getFriendlyTranscriptionError(error: unknown): string {
 }
 
 export function ChatScreen() {
-  const { updateGoal, progress, progressRef, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat, setPracticeAccentPreference } = useAppState();
+  const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat, setPracticeAccentPreference } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -325,6 +325,11 @@ export function ChatScreen() {
       sessionRef.current.correctionCount += hasCorrection ? 1 : 0;
       sessionRef.current.pronunciationHintCount += hasPronunciationHint ? 1 : 0;
       sessionRef.current.source = response.source || "fallback";
+
+      await recordChatTurnFeedback({
+        hadCorrection: hasCorrection,
+        hadPronunciationHint: hasPronunciationHint,
+      });
 
       if (sessionRef.current.turns >= SESSION_CHECKPOINT_TURNS) {
         await saveChatSessionCheckpoint();

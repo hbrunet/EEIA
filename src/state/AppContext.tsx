@@ -107,6 +107,10 @@ type AppContextValue = {
   recordPronunciationWordAttempts: (attempts: Array<{ word: string; score: number; accent: Accent }>) => Promise<void>;
   recordLookupTerm: (term: string) => Promise<void>;
   clearLookupHistory: () => Promise<void>;
+  recordChatTurnFeedback: (input: {
+    hadCorrection: boolean;
+    hadPronunciationHint: boolean;
+  }) => Promise<void>;
   recordChatSessionSummary: (entry: {
     startedAt: string;
     endedAt: string;
@@ -397,6 +401,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
+  async function recordChatTurnFeedback(input: {
+    hadCorrection: boolean;
+    hadPronunciationHint: boolean;
+  }) {
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
+
+    const grammarDelta = input.hadCorrection ? 0.05 : 0.2;
+    const pronunciationDelta = input.hadPronunciationHint ? 0.05 : 0;
+
+    const next: AppProgress = {
+      ...safeProgress,
+      dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], getTodayKey()),
+      metrics: {
+        ...safeProgress.metrics,
+        fluencyScore: clamp(safeProgress.metrics.fluencyScore + 0.05, 0, 10),
+        grammarAccuracy: clamp(safeProgress.metrics.grammarAccuracy + grammarDelta, 0, 100),
+        pronunciationScore: clamp(safeProgress.metrics.pronunciationScore + pronunciationDelta, 0, 10),
+      },
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    await persist(next);
+  }
+
   async function recordChatSessionSummary(entry: {
     startedAt: string;
     endedAt: string;
@@ -420,29 +450,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       source: entry.source,
     };
 
-    // Chat is the core activity — update metrics based on session quality.
-    // Each turn contributes a small fluency gain. Grammar improves when
-    // corrections are low relative to turns (student made few errors).
-    // Pronunciation score gets a small boost for each hint received
-    // (the tutor only hints when it detects something worth improving).
-    const turns = Math.min(entry.turns, 20);
-    const fluencyDelta = clamp(turns * 0.05, 0, 0.5);
-
-    const correctionRatio = entry.turns > 0 ? entry.correctionCount / entry.turns : 0;
-    const grammarDelta = correctionRatio < 0.2 ? 0.6 : correctionRatio < 0.4 ? 0.3 : 0.1;
-
-    const pronunciationDelta = entry.pronunciationHintCount > 0 ? 0.15 : 0;
-
     const next: AppProgress = {
       ...safeProgress,
       chatSessionHistory: [nextEntry, ...(safeProgress.chatSessionHistory || [])].slice(0, 60),
       dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], getTodayKey()),
-      metrics: {
-        ...safeProgress.metrics,
-        fluencyScore: clamp(safeProgress.metrics.fluencyScore + fluencyDelta, 0, 10),
-        grammarAccuracy: clamp(safeProgress.metrics.grammarAccuracy + grammarDelta, 0, 100),
-        pronunciationScore: clamp(safeProgress.metrics.pronunciationScore + pronunciationDelta, 0, 10),
-      },
       lastUpdatedAt: new Date().toISOString(),
     };
 
@@ -556,6 +567,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       recordPronunciationWordAttempts,
       recordLookupTerm,
       clearLookupHistory,
+      recordChatTurnFeedback,
       recordChatSessionSummary,
       recordShadowingPhraseSeen,
       setPracticeAccentPreference,
