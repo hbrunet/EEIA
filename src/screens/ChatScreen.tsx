@@ -482,8 +482,8 @@ export function ChatScreen() {
         {phase === "setup" ? (
           <Text style={styles.helper}>
             {profileLevelConfigured
-              ? "Tu nivel ya está configurado en Perfil. Empezá diciendo qué tema querés practicar hoy."
-              : "El tutor te va a preguntar tu nivel y la temática que querés practicar antes de empezar."}
+              ? "¿Qué tema practicamos hoy?"
+              : "El tutor te guiará antes de empezar."}
           </Text>
         ) : (
           <View style={styles.practiceBadge}>

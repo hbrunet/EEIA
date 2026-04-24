@@ -437,7 +437,12 @@ app.post("/tutor/message", async (req, res) => {
                   "DO NOT restart or reset the conversation. DO NOT greet the student as if they just arrived. DO NOT ask for their name or level again. " +
                   "Continue the practice conversation naturally from where it left off. " +
                   "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n\n"
-                : "") +
+                : (hasConfiguredName && hasConfiguredLevel && history.length === 0)
+                  ? "⚠️ SESSION STATE: The student's name and level are already configured in their profile. " +
+                    "This is the START of a new practice session and the student's message IS their chosen topic. " +
+                    "DO NOT greet them as if they just arrived. DO NOT say 'me alegra verte' or similar welcome phrases. DO NOT ask for name or level again. " +
+                    "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. Set phase to 'practice'.\n\n"
+                  : "") +
               "Your conversation has two phases:\n\n" +
 
               "PHASE 1 - SETUP:\n" +
@@ -516,7 +521,9 @@ app.post("/tutor/message", async (req, res) => {
         ? "practice"
         : (parsed.phase === "practice" && hasLevelAfterMessage && hasNameAfterMessage)
           ? "practice"
-          : "setup";
+          : (hasConfiguredName && hasConfiguredLevel && history.length === 0)
+            ? "practice"
+            : "setup";
 
       return res.json({
         reply: safeReply,
