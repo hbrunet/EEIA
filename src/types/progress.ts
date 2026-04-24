@@ -1,10 +1,8 @@
-export type Accent = "US" | "UK" | "AU" | "CA";
 export type SkillArea = "grammar" | "listening" | "fluency" | "pronunciation" | "vocabulary";
 export type EnglishLevel = "A1" | "A2" | "B1" | "B2" | "C1";
 
 export type LessonMetric = {
   grammarAccuracy: number;
-  listeningByAccent: Record<Accent, number>;
   fluencyScore: number;
   pronunciationScore: number;
 };
@@ -25,7 +23,6 @@ export type Weakness = {
 export type LessonPlan = {
   objective: string;
   focusArea: SkillArea;
-  accentFocus: Accent;
   warmupQuestions: string[];
   activities: string[];
 };
@@ -39,8 +36,6 @@ export type SessionResult = {
   grammarDelta: number;
   fluencyDelta: number;
   pronunciationDelta: number;
-  listeningDelta: number;
-  accent: Accent;
   notes: string;
 };
 
@@ -57,7 +52,6 @@ export type PronunciationWordStat = {
   avgScore: number;
   lastScore: number;
   lastPracticedAt: string;
-  accent: Accent;
 };
 
 export type DailyGoal = {
@@ -84,17 +78,11 @@ export type MetricSnapshot = {
   grammarAccuracy: number;
   fluencyScore: number;
   pronunciationScore: number;
-  listeningByAccent: Record<Accent, number>;
 };
 
 export type ShadowingPractice = {
   dateKey: string;
   seenPhraseKeys: string[];
-};
-
-export type PracticeAccentPreference = {
-  dateKey: string;
-  userSelectedAccent: Accent | null;
 };
 
 export type AppProgress = {
@@ -105,7 +93,6 @@ export type AppProgress = {
   chatSessionHistory: ChatSessionEntry[];
   metricHistory: MetricSnapshot[];
   shadowingPractice: ShadowingPractice;
-  practiceAccentPreference: PracticeAccentPreference;
   dailyGoal: DailyGoal;
   dailyGoalHistory: string[];
   weaknesses: Weakness[];

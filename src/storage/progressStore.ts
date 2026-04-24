@@ -5,12 +5,6 @@ import { AppProgress } from "../types/progress";
 const STORAGE_KEY = "eeia.progress.v1";
 const LEGACY_DEMO_METRICS = {
   grammarAccuracy: 68,
-  listeningByAccent: {
-    US: 78,
-    UK: 61,
-    AU: 66,
-    CA: 72,
-  },
   fluencyScore: 5,
   pronunciationScore: 6,
 };
@@ -20,7 +14,8 @@ const LEGACY_PROFILE_DEFAULTS = {
 };
 
 function getTodayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function buildDefaultDailyGoal() {
@@ -45,27 +40,14 @@ function buildDefaultShadowingPractice() {
   };
 }
 
-function buildDefaultPracticeAccentPreference() {
-  return {
-    dateKey: getTodayKey(),
-    userSelectedAccent: null,
-  };
-}
-
 export const defaultProgress: AppProgress = {
   profile: {
     name: "",
-    goals: ["Improve speaking confidence", "Understand multiple accents"],
+    goals: ["Improve speaking confidence"],
     weakAreas: [],
   },
   metrics: {
     grammarAccuracy: 0,
-    listeningByAccent: {
-      US: 0,
-      UK: 0,
-      AU: 0,
-      CA: 0,
-    },
     fluencyScore: 0,
     pronunciationScore: 0,
   },
@@ -74,14 +56,12 @@ export const defaultProgress: AppProgress = {
   chatSessionHistory: [],
   metricHistory: [],
   shadowingPractice: buildDefaultShadowingPractice(),
-  practiceAccentPreference: buildDefaultPracticeAccentPreference(),
   dailyGoal: buildDefaultDailyGoal(),
   dailyGoalHistory: [],
   weaknesses: [],
   currentLesson: {
     objective: "",
     focusArea: "grammar",
-    accentFocus: "UK",
     warmupQuestions: [],
     activities: [],
   },
@@ -97,7 +77,6 @@ function buildBaseProgress(): AppProgress {
     ...defaultProgress,
     dailyGoal: buildDefaultDailyGoal(),
     shadowingPractice: buildDefaultShadowingPractice(),
-    practiceAccentPreference: buildDefaultPracticeAccentPreference(),
     metricHistory: [],
     lastUpdatedAt: new Date().toISOString(),
   };
@@ -124,11 +103,7 @@ function looksLikeLegacyDemoSeed(data: Partial<AppProgress>): boolean {
   const matchesLegacyMetrics =
     metrics?.grammarAccuracy === LEGACY_DEMO_METRICS.grammarAccuracy &&
     metrics?.fluencyScore === LEGACY_DEMO_METRICS.fluencyScore &&
-    metrics?.pronunciationScore === LEGACY_DEMO_METRICS.pronunciationScore &&
-    metrics?.listeningByAccent?.US === LEGACY_DEMO_METRICS.listeningByAccent.US &&
-    metrics?.listeningByAccent?.UK === LEGACY_DEMO_METRICS.listeningByAccent.UK &&
-    metrics?.listeningByAccent?.AU === LEGACY_DEMO_METRICS.listeningByAccent.AU &&
-    metrics?.listeningByAccent?.CA === LEGACY_DEMO_METRICS.listeningByAccent.CA;
+    metrics?.pronunciationScore === LEGACY_DEMO_METRICS.pronunciationScore;
 
   const normalizedName = String(data.profile?.name || "").trim().toLowerCase();
   const normalizedLevel = String(data.profile?.level || "").trim().toUpperCase();
@@ -155,10 +130,6 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
     metrics: {
       ...seededProgress.metrics,
       ...(data.metrics || {}),
-      listeningByAccent: {
-        ...seededProgress.metrics.listeningByAccent,
-        ...(data.metrics?.listeningByAccent || {}),
-      },
     },
     pronunciationWordStats: Array.isArray(data.pronunciationWordStats)
       ? data.pronunciationWordStats
@@ -170,13 +141,7 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
       ? data.chatSessionHistory
       : seededProgress.chatSessionHistory,
     metricHistory: Array.isArray(data.metricHistory)
-      ? data.metricHistory.map((item) => ({
-          ...item,
-          listeningByAccent: {
-            ...seededProgress.metrics.listeningByAccent,
-            ...(item?.listeningByAccent || {}),
-          },
-        }))
+      ? data.metricHistory
       : seededProgress.metricHistory,
     shadowingPractice: data.shadowingPractice && typeof data.shadowingPractice === "object"
       ? {
@@ -186,12 +151,6 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
             : [],
         }
       : seededProgress.shadowingPractice,
-    practiceAccentPreference: data.practiceAccentPreference && typeof data.practiceAccentPreference === "object"
-      ? {
-          dateKey: typeof data.practiceAccentPreference.dateKey === "string" ? data.practiceAccentPreference.dateKey : getTodayKey(),
-          userSelectedAccent: typeof data.practiceAccentPreference.userSelectedAccent === "string" && ["US", "UK", "AU", "CA"].includes(data.practiceAccentPreference.userSelectedAccent) ? data.practiceAccentPreference.userSelectedAccent : null,
-        }
-      : seededProgress.practiceAccentPreference,
     dailyGoalHistory: Array.isArray(data.dailyGoalHistory)
       ? data.dailyGoalHistory
       : seededProgress.dailyGoalHistory,
@@ -202,9 +161,6 @@ function normalizeProgress(data: Partial<AppProgress>): AppProgress {
     shadowingPractice: merged.shadowingPractice?.dateKey === getTodayKey()
       ? merged.shadowingPractice
       : buildDefaultShadowingPractice(),
-    practiceAccentPreference: merged.practiceAccentPreference?.dateKey === getTodayKey()
-      ? merged.practiceAccentPreference
-      : buildDefaultPracticeAccentPreference(),
     dailyGoal: merged.dailyGoal?.dateKey === getTodayKey() ? merged.dailyGoal : buildDefaultDailyGoal(),
     weaknesses: merged.weaknesses?.length ? merged.weaknesses : inferWeaknesses(merged),
     currentLesson: merged.currentLesson?.objective ? merged.currentLesson : buildDailyLesson(merged),

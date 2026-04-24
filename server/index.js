@@ -369,6 +369,10 @@ app.post("/tutor/message", async (req, res) => {
       : null;
     const hasConfiguredLevel = typeof learnerProfile?.level === "string" && learnerProfile.level.trim().length > 0;
     const hasConfiguredName = typeof learnerProfile?.name === "string" && learnerProfile.name.trim().length > 0;
+    const isInPracticePhase = learnerProfile?.currentPhase === "practice";
+    const currentTopic = typeof learnerProfile?.currentTopic === "string" && learnerProfile.currentTopic.trim().length > 0
+      ? learnerProfile.currentTopic.trim()
+      : null;
     const normalizedLearnerStage = normalizeLearnerStage(learnerProfile?.level);
     const capturedLevel = !hasConfiguredLevel ? inferCefrLevelFromMessage(message) : null;
     const capturedName = !hasConfiguredName
@@ -427,6 +431,13 @@ app.post("/tutor/message", async (req, res) => {
                   : "") +
                 "Use this profile to: adjust difficulty, focus corrections on their weak areas, prioritize their goals, and propose exercises that target their specific weaknesses.\n"
               ) : "") +
+              (isInPracticePhase
+                ? "⚠️ SESSION STATE: The student is ALREADY IN PRACTICE PHASE. " +
+                  (currentTopic ? `The established practice topic is: "${currentTopic}". ` : "") +
+                  "DO NOT restart or reset the conversation. DO NOT greet the student as if they just arrived. DO NOT ask for their name or level again. " +
+                  "Continue the practice conversation naturally from where it left off. " +
+                  "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n\n"
+                : "") +
               "Your conversation has two phases:\n\n" +
 
               "PHASE 1 - SETUP:\n" +
@@ -501,9 +512,11 @@ app.post("/tutor/message", async (req, res) => {
       const correction = typeof parsed.correction === "string" && parsed.correction.toLowerCase() !== "null" ? parsed.correction : null;
       const pronunciationHint = typeof parsed.pronunciationHint === "string" && parsed.pronunciationHint.toLowerCase() !== "null" ? parsed.pronunciationHint : null;
       // Keep setup until both name and level are captured/configured.
-      const phase = (parsed.phase === "practice" && hasLevelAfterMessage && hasNameAfterMessage)
+      const phase = isInPracticePhase
         ? "practice"
-        : "setup";
+        : (parsed.phase === "practice" && hasLevelAfterMessage && hasNameAfterMessage)
+          ? "practice"
+          : "setup";
 
       return res.json({
         reply: safeReply,

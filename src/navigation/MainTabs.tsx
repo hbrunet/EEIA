@@ -34,16 +34,22 @@ const TAB_LABELS: Record<string, string> = {
 const BADGE_MILESTONES = [3, 7, 14, 30];
 
 function getTodayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function dateToLocalKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function computeCurrentStreak(history: string[]): number {
   const keys = new Set(history || []);
   let streak = 0;
-  const cursor = new Date(`${getTodayKey()}T00:00:00`);
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
 
   while (true) {
-    const key = cursor.toISOString().slice(0, 10);
+    const key = dateToLocalKey(cursor);
     if (!keys.has(key)) break;
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);

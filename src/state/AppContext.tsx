@@ -1,14 +1,15 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { applyGoalUpdate, applySessionResult, runDiagnostic } from "../domain/learningEngine";
 import { loadProgress, resetProgressStorage, saveProgress } from "../storage/progressStore";
-import { Accent, AppProgress, EnglishLevel, SessionResult } from "../types/progress";
+import { AppProgress, EnglishLevel, SessionResult } from "../types/progress";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
 function getTodayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function buildDailyGoal() {
@@ -69,7 +70,6 @@ function upsertTodayMetricSnapshot(progress: AppProgress): AppProgress {
     grammarAccuracy: progress.metrics.grammarAccuracy,
     fluencyScore: progress.metrics.fluencyScore,
     pronunciationScore: progress.metrics.pronunciationScore,
-    listeningByAccent: { ...progress.metrics.listeningByAccent },
   };
 
   const metricHistory = Array.isArray(progress.metricHistory) ? [...progress.metricHistory] : [];
@@ -101,10 +101,9 @@ type AppContextValue = {
   updateGoal: (goal: string) => Promise<void>;
   completeSession: (result: SessionResult) => Promise<void>;
   runInitialDiagnostic: () => Promise<void>;
-  boostListening: (accent: keyof AppProgress["metrics"]["listeningByAccent"]) => Promise<void>;
-  recordPronunciationPractice: (score: number, accent: Accent) => Promise<void>;
-  recordPronunciationWordAttempt: (word: string, score: number, accent: Accent) => Promise<void>;
-  recordPronunciationWordAttempts: (attempts: Array<{ word: string; score: number; accent: Accent }>) => Promise<void>;
+  recordPronunciationPractice: (score: number) => Promise<void>;
+  recordPronunciationWordAttempt: (word: string, score: number) => Promise<void>;
+  recordPronunciationWordAttempts: (attempts: Array<{ word: string; score: number }>) => Promise<void>;
   recordLookupTerm: (term: string) => Promise<void>;
   clearLookupHistory: () => Promise<void>;
   recordChatTurnFeedback: (input: {
@@ -121,7 +120,6 @@ type AppContextValue = {
     source: "openai" | "gemini" | "groq" | "fallback";
   }) => Promise<void>;
   recordShadowingPhraseSeen: (level: "básico" | "intermedio" | "avanzado", phrase: string) => Promise<void>;
-  setPracticeAccentPreference: (accent: Accent | null) => Promise<void>;
   recordDailyRoutineCompleted: () => Promise<void>;
   markDailyGoalCompleted: () => Promise<void>;
   resetProgress: () => Promise<void>;
@@ -229,45 +227,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
-  async function boostListening(accent: keyof AppProgress["metrics"]["listeningByAccent"]) {
-    const latest = progressRef.current;
-    if (!latest) return;
-    const safeProgress = ensureTodayGoal(latest);
-    const current = safeProgress.metrics.listeningByAccent[accent];
-    const boosted = Math.min(100, current + 4);
-
-    const next: AppProgress = {
-      ...safeProgress,
-      metrics: {
-        ...safeProgress.metrics,
-        listeningByAccent: {
-          ...safeProgress.metrics.listeningByAccent,
-          [accent]: boosted,
-        },
-      },
-      lastUpdatedAt: new Date().toISOString(),
-    };
-
-    await persist(next);
-  }
-
-  async function recordPronunciationPractice(score: number, accent: Accent) {
+  async function recordPronunciationPractice(score: number) {
     const latest = progressRef.current;
     if (!latest) return;
     const safeProgress = ensureTodayGoal(latest);
 
     const pronunciationDelta = score >= 90 ? 0.6 : score >= 75 ? 0.4 : score >= 60 ? 0.2 : 0.1;
-    const listeningDelta = score >= 75 ? 2 : 1;
 
     const next: AppProgress = {
       ...safeProgress,
       metrics: {
         ...safeProgress.metrics,
         pronunciationScore: clamp(safeProgress.metrics.pronunciationScore + pronunciationDelta, 1, 10),
-        listeningByAccent: {
-          ...safeProgress.metrics.listeningByAccent,
-          [accent]: clamp(safeProgress.metrics.listeningByAccent[accent] + listeningDelta, 0, 100),
-        },
       },
       dailyGoalHistory: appendGoalHistory(safeProgress.dailyGoalHistory || [], getTodayKey()),
       lastUpdatedAt: new Date().toISOString(),
@@ -276,7 +247,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
-  async function recordPronunciationWordAttempt(word: string, score: number, accent: Accent) {
+  async function recordPronunciationWordAttempt(word: string, score: number) {
     const latest = progressRef.current;
     if (!latest) return;
     const safeProgress = ensureTodayGoal(latest);
@@ -295,7 +266,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           avgScore: Math.round(((existing.avgScore * existing.attempts + score) / (existing.attempts + 1)) * 10) / 10,
           lastScore: score,
           lastPracticedAt: now,
-          accent,
         }
       : {
           word: normalizedWord,
@@ -304,7 +274,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           avgScore: score,
           lastScore: score,
           lastPracticedAt: now,
-          accent,
         };
 
     const withoutCurrent = safeProgress.pronunciationWordStats.filter((item) => item.word !== normalizedWord);
@@ -319,7 +288,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
-  async function recordPronunciationWordAttempts(attempts: Array<{ word: string; score: number; accent: Accent }>) {
+  async function recordPronunciationWordAttempts(attempts: Array<{ word: string; score: number }>) {
     const latest = progressRef.current;
     if (!latest || attempts.length === 0) return;
     const safeProgress = ensureTodayGoal(latest);
@@ -340,7 +309,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           avgScore: Math.round(((existing.avgScore * existing.attempts + attempt.score) / (existing.attempts + 1)) * 10) / 10,
           lastScore: attempt.score,
           lastPracticedAt: now,
-          accent: attempt.accent,
         });
       } else {
         map.set(normalizedWord, {
@@ -350,7 +318,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           avgScore: attempt.score,
           lastScore: attempt.score,
           lastPracticedAt: now,
-          accent: attempt.accent,
         });
       }
     }
@@ -484,23 +451,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persist(next);
   }
 
-  async function setPracticeAccentPreference(accent: Accent | null) {
-    const latest = progressRef.current;
-    if (!latest) return;
-    const safeProgress = ensureTodayGoal(latest);
-
-    const next: AppProgress = {
-      ...safeProgress,
-      practiceAccentPreference: {
-        dateKey: getTodayKey(),
-        userSelectedAccent: accent,
-      },
-      lastUpdatedAt: new Date().toISOString(),
-    };
-
-    await persist(next);
-  }
-
   async function recordDailyRoutineCompleted() {
     const latest = progressRef.current;
     if (!latest) return;
@@ -561,7 +511,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateGoal,
       completeSession,
       runInitialDiagnostic,
-      boostListening,
       recordPronunciationPractice,
       recordPronunciationWordAttempt,
       recordPronunciationWordAttempts,
@@ -570,7 +519,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       recordChatTurnFeedback,
       recordChatSessionSummary,
       recordShadowingPhraseSeen,
-      setPracticeAccentPreference,
       recordDailyRoutineCompleted,
       markDailyGoalCompleted,
       resetProgress,

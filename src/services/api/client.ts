@@ -43,6 +43,8 @@ export type TutorLearnerProfile = {
   pronunciationScore?: number;
   weaknesses?: Array<{ area: string; detail: string; severity: number }>;
   goals?: string[];
+  currentPhase?: "setup" | "practice";
+  currentTopic?: string;
 };
 
 export type TutorMessageResponse = {

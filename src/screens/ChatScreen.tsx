@@ -6,7 +6,6 @@ import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
-import { Accent } from "../types/progress";
 import { theme } from "../ui/theme";
 
 type ChatMessage = {
@@ -19,16 +18,14 @@ type ChatMessage = {
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
-const ACCENT_SPEECH_META: Record<Accent, { locale: string; label: string }> = {
-  US: { locale: "en-US", label: "Inglés americano" },
-  UK: { locale: "en-GB", label: "Inglés británico" },
-  AU: { locale: "en-AU", label: "Inglés australiano" },
-  CA: { locale: "en-CA", label: "Inglés canadiense" },
-};
 const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
   en: "Inglés",
   es: "Español",
 };
+
+type SpeechRate = "normal" | "slow";
+const SPEECH_RATE_VALUE: Record<SpeechRate, number> = { normal: 0.95, slow: 0.65 };
+const SPEECH_RATE_LABEL: Record<SpeechRate, string> = { normal: "Normal", slow: "Lento" };
 
 function isBeginnerLevel(level?: string): boolean {
   const normalized = String(level || "").trim().toUpperCase();
@@ -81,7 +78,7 @@ function getFriendlyTranscriptionError(error: unknown): string {
 }
 
 export function ChatScreen() {
-  const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat, setPracticeAccentPreference } = useAppState();
+  const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,9 +97,9 @@ export function ChatScreen() {
   const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
+  const [speechRate, setSpeechRate] = useState<SpeechRate>("normal");
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
-  const [accentSelectorOpen, setAccentSelectorOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const isCheckpointSavingRef = useRef(false);
   const sessionRef = useRef<{
@@ -137,15 +134,11 @@ export function ChatScreen() {
   );
   const hasTypedMessage = message.trim().length > 0;
   const actionDisabled = loading || isTranscribing;
-  const userSelectedAccent = progress?.practiceAccentPreference?.userSelectedAccent;
-  const practiceAccent: Accent = userSelectedAccent || progress?.currentLesson?.accentFocus || "US";
-  const practiceAccentMeta = ACCENT_SPEECH_META[practiceAccent];
 
-  function getSpeechOptions(accent: Accent, rate = 0.95): Speech.SpeechOptions {
-    const locale = ACCENT_SPEECH_META[accent].locale;
-    const normalizedLocale = locale.toLowerCase();
-    const voice = availableVoices.find((item) => item.language?.toLowerCase() === normalizedLocale)
-      || availableVoices.find((item) => item.language?.toLowerCase().startsWith(normalizedLocale));
+  function getSpeechOptions(rate = 0.95): Speech.SpeechOptions {
+    const locale = "en-US";
+    const voice = availableVoices.find((item) => item.language?.toLowerCase() === "en-us")
+      || availableVoices.find((item) => item.language?.toLowerCase().startsWith("en"));
 
     return {
       language: locale,
@@ -153,6 +146,23 @@ export function ChatScreen() {
       rate,
       pitch: 1,
     };
+  }
+
+  function onChangeSpeechRate(r: SpeechRate) {
+    if (r === speechRate) return;
+    setSpeechRate(r);
+    if (speakingMessageId) {
+      const msg = messages.find((m) => m.id === speakingMessageId);
+      if (msg) {
+        Speech.stop();
+        Speech.speak(msg.text.trim(), {
+          ...getSpeechOptions(SPEECH_RATE_VALUE[r]),
+          onDone: () => setSpeakingMessageId(null),
+          onStopped: () => setSpeakingMessageId(null),
+          onError: () => setSpeakingMessageId(null),
+        });
+      }
+    }
   }
 
   function onSpeakAssistantMessage(messageId: string, text: string) {
@@ -169,7 +179,7 @@ export function ChatScreen() {
     setSpeakingMessageId(messageId);
 
     Speech.speak(content, {
-      ...getSpeechOptions(practiceAccent, 0.95),
+      ...getSpeechOptions(SPEECH_RATE_VALUE[speechRate]),
       onDone: () => setSpeakingMessageId(null),
       onStopped: () => setSpeakingMessageId(null),
       onError: () => setSpeakingMessageId(null),
@@ -303,6 +313,8 @@ export function ChatScreen() {
           pronunciationScore: latestProgress.metrics.pronunciationScore,
           weaknesses: latestProgress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
           goals: latestProgress.profile.goals,
+          currentPhase: phase,
+          currentTopic: sessionRef.current.topic || undefined,
       } : undefined);
       setLastSource(response.source || null);
           const correctionText = response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null;
@@ -478,14 +490,6 @@ export function ChatScreen() {
             <Text style={styles.practiceBadgeText}>Modo práctica activo</Text>
           </View>
         )}
-        <Pressable
-          style={[styles.accentHelperBtn, userSelectedAccent && styles.accentHelperBtnActive]}
-          onPress={() => setAccentSelectorOpen(true)}
-        >
-          <Text style={styles.accentHelper}>
-            Acento: {practiceAccentMeta.label} {userSelectedAccent ? "(manual)" : "(automático)"}
-          </Text>
-        </Pressable>
       </View>
 
       {/* Scrollable area: chat + corrección + ejercicio */}
@@ -531,7 +535,9 @@ export function ChatScreen() {
                 </Pressable>
               </View>
             )}
-            <Text style={styles.empty}>Empezá saludando al tutor para configurar tu sesión.</Text>
+            {!profileLevelConfigured && (
+              <Text style={styles.empty}>Empezá saludando al tutor para configurar tu sesión.</Text>
+            )}
           </>
         )}
         {messages.map((item) => (
@@ -561,14 +567,27 @@ export function ChatScreen() {
                     );
                   })}
                 </Text>
-                <Pressable
-                  style={[styles.listenMessageBtn, speakingMessageId === item.id && styles.listenMessageBtnActive]}
-                  onPress={() => onSpeakAssistantMessage(item.id, item.text)}
-                >
-                  <Text style={styles.listenMessageBtnText}>
-                    {speakingMessageId === item.id ? "Detener audio" : "Escuchar mensaje"}
-                  </Text>
-                </Pressable>
+                <View style={styles.listenMessageRow}>
+                  <Pressable
+                    style={[styles.listenMessageBtn, speakingMessageId === item.id && styles.listenMessageBtnActive]}
+                    onPress={() => onSpeakAssistantMessage(item.id, item.text)}
+                  >
+                    <Text style={styles.listenMessageBtnText}>
+                      {speakingMessageId === item.id ? "Detener audio" : "Escuchar mensaje"}
+                    </Text>
+                  </Pressable>
+                  {(["normal", "slow"] as const).map((r) => (
+                    <Pressable
+                      key={r}
+                      style={[styles.speechRateChip, speechRate === r && styles.speechRateChipActive]}
+                      onPress={() => onChangeSpeechRate(r)}
+                    >
+                      <Text style={[styles.speechRateChipText, speechRate === r && styles.speechRateChipTextActive]}>
+                        {SPEECH_RATE_LABEL[r]}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
               </>
             ) : (
               <>
@@ -852,56 +871,6 @@ export function ChatScreen() {
         </Pressable>
       </Modal>
 
-      {/* Accent selector modal */}
-      <Modal
-        visible={accentSelectorOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setAccentSelectorOpen(false)}
-      >
-        <Pressable style={styles.accentSelectorBackdrop} onPress={() => setAccentSelectorOpen(false)}>
-          <View style={styles.accentSelectorCard} onStartShouldSetResponder={() => true}>
-            <Text style={styles.accentSelectorTitle}>Seleccionar acento de práctica</Text>
-            <Text style={styles.accentSelectorHelper}>
-              Elegí un acento o volvé a automático. Automático elige el más débil según tu progreso.
-            </Text>
-            <View style={styles.accentSelectorOptions}>
-              {(["US", "UK", "AU", "CA"] as const).map((accent) => {
-                const selected = practiceAccent === accent;
-                return (
-                  <Pressable
-                    key={accent}
-                    style={[styles.accentSelectorOption, selected && styles.accentSelectorOptionActive]}
-                    onPress={async () => {
-                      if (userSelectedAccent === accent) {
-                        await setPracticeAccentPreference(null);
-                      } else {
-                        await setPracticeAccentPreference(accent);
-                      }
-                      setAccentSelectorOpen(false);
-                    }}
-                  >
-                    <Text style={[styles.accentSelectorOptionText, selected && styles.accentSelectorOptionTextActive]}>
-                      {ACCENT_SPEECH_META[accent].label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {userSelectedAccent && (
-              <Pressable
-                style={styles.accentSelectorResetBtn}
-                onPress={async () => {
-                  await setPracticeAccentPreference(null);
-                  setAccentSelectorOpen(false);
-                }}
-              >
-                <Text style={styles.accentSelectorResetBtnText}>Volver a automático</Text>
-              </Pressable>
-            )}
-          </View>
-        </Pressable>
-      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -941,83 +910,6 @@ const styles = StyleSheet.create({
   helper: {
     fontSize: 13,
     color: theme.colors.muted,
-  },
-  accentHelper: {
-    fontSize: 12,
-    color: "#8a6d3b",
-  },
-  accentHelperBtn: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  accentHelperBtnActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
-  },
-  accentSelectorBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.35)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  accentSelectorCard: {
-    backgroundColor: theme.colors.background,
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    gap: 12,
-    maxWidth: "86%",
-  },
-  accentSelectorTitle: {
-    color: theme.colors.text,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  accentSelectorHelper: {
-    color: theme.colors.muted,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  accentSelectorOptions: {
-    gap: 8,
-  },
-  accentSelectorOption: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.panel,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  accentSelectorOptionActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: theme.colors.accent,
-  },
-  accentSelectorOptionText: {
-    color: theme.colors.text,
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  accentSelectorOptionTextActive: {
-    color: "#fff",
-  },
-  accentSelectorResetBtn: {
-    marginTop: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  accentSelectorResetBtnText: {
-    color: theme.colors.muted,
-    fontWeight: "700",
-    fontSize: 12,
   },
   suggestCard: {
     backgroundColor: theme.colors.panel,
@@ -1110,8 +1002,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  listenMessageBtn: {
+  listenMessageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
     marginTop: 8,
+  },
+  listenMessageBtn: {
     alignSelf: "flex-start",
     borderRadius: 999,
     borderWidth: 1,
@@ -1128,6 +1026,26 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 11,
     fontWeight: "700",
+  },
+  speechRateChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.panel,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  speechRateChipActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: "#dff3f8",
+  },
+  speechRateChipText: {
+    color: theme.colors.muted,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  speechRateChipTextActive: {
+    color: theme.colors.accent,
   },
   correctionHintWrap: {
     marginTop: 8,

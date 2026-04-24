@@ -9,16 +9,22 @@ const HOUR = new Date().getHours();
 const GREETING = HOUR < 12 ? "Buenos días" : HOUR < 19 ? "Buenas tardes" : "Buenas noches";
 
 function getTodayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function dateToLocalKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function computeCurrentStreak(history: string[]): number {
   const set = new Set(history || []);
   let streak = 0;
-  const cursor = new Date(`${getTodayKey()}T00:00:00`);
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
 
   while (true) {
-    const day = cursor.toISOString().slice(0, 10);
+    const day = dateToLocalKey(cursor);
     if (!set.has(day)) break;
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
@@ -35,32 +41,31 @@ function formatShortDate(value: string): string {
   return new Date(value).toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
 }
 
+const BADGE_DATA: { days: number; icon: string; label: string }[] = [
+  { days: 3, icon: "🥉", label: "3 días" },
+  { days: 7, icon: "🥈", label: "7 días" },
+  { days: 14, icon: "🥇", label: "14 días" },
+  { days: 30, icon: "🏆", label: "30 días" },
+];
+
 export function HomeScreen() {
   const { progress, runInitialDiagnostic } = useAppState();
   const navigation = useNavigation<any>();
 
   const profile = progress?.profile;
   const metrics = progress?.metrics;
-  const dailyGoal = progress?.dailyGoal;
   const dailyGoalHistory = progress?.dailyGoalHistory || [];
   const streak = computeCurrentStreak(dailyGoalHistory);
   const nextBadge = nextMilestone(streak);
   const chatSessions = progress?.chatSessionHistory || [];
   const lastChatSession = chatSessions[0] || null;
   const words = progress?.pronunciationWordStats || [];
+  const todayPracticed = dailyGoalHistory.includes(getTodayKey());
 
   const grammarPct = Math.round(metrics?.grammarAccuracy ?? 0);
   const fluencyPct = Math.round((metrics?.fluencyScore ?? 0) * 10);
   const pronunciationPct = Math.round((metrics?.pronunciationScore ?? 0) * 10);
-  const wordsAverage = words.length
-    ? Math.round(words.reduce((sum, item) => sum + item.avgScore, 0) / words.length)
-    : null;
-  const weakestWords = [...words]
-    .sort((a, b) => a.avgScore - b.avgScore)
-    .slice(0, 3);
-  const routineProgressPct = dailyGoal
-    ? Math.round((dailyGoal.completedRoutines / Math.max(1, dailyGoal.targetRoutines)) * 100)
-    : 0;
+
   const trendWindow = [...(progress?.metricHistory || [])]
     .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
     .slice(-7);
@@ -70,8 +75,6 @@ export function HomeScreen() {
     fluency: Math.round(item.fluencyScore * 10),
     pronunciation: Math.round(item.pronunciationScore * 10),
   }));
-  const trendBase = trendWindow.length > 1 ? trendWindow[0] : null;
-  const trendLast = trendWindow.length > 0 ? trendWindow[trendWindow.length - 1] : null;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -88,47 +91,61 @@ export function HomeScreen() {
         )}
       </View>
 
-      {/* Objetivo diario y foco de hoy */}
-      {dailyGoal && (
-        <View style={[styles.dailyGoalCard, dailyGoal.completed && styles.dailyGoalDone]}>
-          <View style={styles.dailyGoalHeader}>
-            <Text style={styles.sectionLabel}>🎯 Foco de hoy</Text>
-            <Text style={styles.dailyGoalStatus}>{dailyGoal.completed ? "Completado" : "En curso"}</Text>
-          </View>
-          <Text style={styles.dailyGoalTitle}>{dailyGoal.title}</Text>
-          <Text style={styles.dailyGoalMeta}>
-            {dailyGoal.completedRoutines}/{dailyGoal.targetRoutines} rutina(s) completadas hoy
+      {/* Tarjeta principal: Foco de hoy */}
+      <View style={[styles.focusCard, todayPracticed && styles.focusCardDone]}>
+        <View style={styles.focusHeaderRow}>
+          <Text style={styles.focusLabel}>🎯 Foco de hoy</Text>
+          <Text style={[styles.focusStatus, todayPracticed && styles.focusStatusDone]}>
+            {todayPracticed ? "¡Completado!" : "Pendiente"}
           </Text>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${routineProgressPct}%` as any }]} />
-          </View>
-          {dailyGoal.checklist.map((item, index) => {
-            const checked = dailyGoal.completed || index < dailyGoal.completedRoutines;
-            return (
-              <Text key={`goal-item-${index}`} style={[styles.dailyGoalItem, checked && styles.dailyGoalItemChecked]}>
-                {checked ? "✓" : "○"} {item}
-              </Text>
-            );
-          })}
-          <View style={styles.dailyGoalActions}>
-            <Pressable style={styles.dailyGoalBtn} onPress={() => navigation.navigate("Chat")}>
-              <Text style={styles.dailyGoalBtnText}>Abrir chat</Text>
-            </Pressable>
-            <Pressable style={[styles.dailyGoalBtn, styles.dailyGoalBtnNeutral]} onPress={() => navigation.navigate("Accents")}>
-              <Text style={styles.dailyGoalBtnTextNeutral}>Pronunciación</Text>
-            </Pressable>
+        </View>
+
+        <Text style={styles.focusTitle}>
+          {todayPracticed
+            ? "¡Genial! Ya practicaste hoy. Seguí con otra sesión."
+            : "Abrí el chat y conversá con tu tutor virtual."}
+        </Text>
+        <Text style={styles.focusDesc}>
+          El chat con el tutor es la actividad principal de la app. Practicá inglés en situaciones reales, recibí correcciones al instante y avanzá a tu ritmo.
+        </Text>
+
+        <Pressable style={styles.chatBtn} onPress={() => navigation.navigate("Chat")}>
+          <Text style={styles.chatBtnText}>💬 Abrir chat con el tutor</Text>
+        </Pressable>
+
+        <Pressable style={styles.secondaryBtn} onPress={() => navigation.navigate("Accents")}>
+          <Text style={styles.secondaryBtnText}>🎙 Práctica de pronunciación</Text>
+        </Pressable>
+
+        {/* Racha e insignias */}
+        <View style={styles.streakSection}>
+          <View style={styles.streakMainRow}>
+            <Text style={styles.streakNumber}>🔥 {streak}</Text>
+            <View style={styles.streakInfo}>
+              <Text style={styles.streakLabel}>día{streak !== 1 ? "s" : ""} seguido{streak !== 1 ? "s" : ""}</Text>
+              {nextBadge ? (
+                <Text style={styles.streakHint}>Faltan {nextBadge - streak} para la próxima insignia</Text>
+              ) : streak > 0 ? (
+                <Text style={styles.streakHint}>¡Todas las insignias desbloqueadas!</Text>
+              ) : (
+                <Text style={styles.streakHint}>Practicá hoy para empezar tu racha</Text>
+              )}
+            </View>
           </View>
 
-          <View style={styles.streakRow}>
-            <Text style={styles.streakText}>🔥 Racha actual: {streak} día(s)</Text>
-            {nextBadge ? (
-              <Text style={styles.badgeText}>Próxima insignia: {nextBadge} días</Text>
-            ) : (
-              <Text style={styles.badgeText}>🏅 Todas las insignias desbloqueadas</Text>
-            )}
+          <View style={styles.badgesRow}>
+            {BADGE_DATA.map(({ days, icon, label }) => {
+              const unlocked = streak >= days;
+              return (
+                <View key={days} style={[styles.badgeChip, unlocked && styles.badgeChipUnlocked]}>
+                  <Text style={styles.badgeIcon}>{unlocked ? icon : "🔒"}</Text>
+                  <Text style={[styles.badgeLabel, unlocked && styles.badgeLabelUnlocked]}>{label}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
-      )}
+      </View>
 
       {/* Resumen rápido */}
       <Text style={styles.sectionTitle}>Resumen rápido</Text>
@@ -151,8 +168,28 @@ export function HomeScreen() {
         })}
       </View>
 
+      {/* Actividad reciente */}
+      <View style={styles.activityCard}>
+        <Text style={styles.sectionLabel}>🧾 Actividad reciente</Text>
+        <Text style={styles.activityLine}>
+          Sesiones de chat: <Text style={styles.activityBold}>{chatSessions.length}</Text>
+        </Text>
+        <Text style={styles.activityLine}>
+          Última sesión:{" "}
+          <Text style={styles.activityBold}>
+            {lastChatSession
+              ? `${formatShortDate(lastChatSession.endedAt)} · ${lastChatSession.turns} turno(s)`
+              : "Sin sesiones aún"}
+          </Text>
+        </Text>
+        <Text style={styles.activityLine}>
+          Palabras practicadas: <Text style={styles.activityBold}>{words.length}</Text>
+        </Text>
+      </View>
+
+      {/* Tendencia */}
       <View style={styles.trendCard}>
-        <Text style={styles.sectionLabel}>📈 Dashboard 7 días</Text>
+        <Text style={styles.sectionLabel}>📈 Evolución 7 días</Text>
         {trendGraphData.length > 1 ? (
           <>
             <View style={styles.chartRow}>
@@ -167,26 +204,10 @@ export function HomeScreen() {
                 </View>
               ))}
             </View>
-            <Text style={styles.chartLegend}>Naranja: gramática · Amarillo: fluidez · Azul: pronunciación</Text>
+            <Text style={styles.chartLegend}>Azul: gramática · Naranja: fluidez · Verde: pronunciación</Text>
           </>
         ) : (
           <Text style={styles.activityHint}>Todavía no hay datos suficientes para mostrar tendencia semanal.</Text>
-        )}
-      </View>
-
-      {/* Actividad reciente */}
-      <View style={styles.activityCard}>
-        <Text style={styles.sectionLabel}>🧾 Actividad reciente</Text>
-        <Text style={styles.activityLine}>Sesiones de chat: {chatSessions.length}</Text>
-        <Text style={styles.activityLine}>
-          Última sesión: {lastChatSession ? `${formatShortDate(lastChatSession.endedAt)} · ${lastChatSession.turns} turno(s)` : "Sin sesiones aún"}
-        </Text>
-        <Text style={styles.activityLine}>Palabras practicadas: {words.length}</Text>
-        <Text style={styles.activityLine}>
-          Promedio de palabras: {wordsAverage !== null ? `${wordsAverage}%` : "Sin datos todavía"}
-        </Text>
-        {weakestWords.length > 0 && (
-          <Text style={styles.activityHint}>A reforzar: {weakestWords.map((item) => item.word).join(", ")}</Text>
         )}
       </View>
 
@@ -197,22 +218,6 @@ export function HomeScreen() {
           <Text style={styles.diagnosticCta}>Ejecutar ahora →</Text>
         </Pressable>
       )}
-
-      {/* Accesos */}
-      <Text style={styles.sectionTitle}>Accesos rápidos</Text>
-      <View style={styles.quickGrid}>
-        {[
-          { icon: "💬", label: "Chat", screen: "Chat" },
-          { icon: "🗣", label: "Pronunciación", screen: "Accents" },
-          { icon: "📊", label: "Progreso", screen: "Progress" },
-          { icon: "👤", label: "Perfil", screen: "Profile" },
-        ].map(({ icon, label, screen }) => (
-          <Pressable key={screen} style={styles.quickCard} onPress={() => navigation.navigate(screen)}>
-            <Text style={styles.quickIcon}>{icon}</Text>
-            <Text style={styles.quickLabel}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
 
       <View style={styles.footerSpace} />
     </ScrollView>
@@ -233,60 +238,71 @@ const styles = StyleSheet.create({
   sectionLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
   sectionTitle: { fontWeight: "700", color: theme.colors.muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.8 },
 
-  dailyGoalCard: {
+  // Tarjeta foco
+  focusCard: {
     backgroundColor: "#eef9f0",
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: "#b8e5bf",
-    padding: 14,
-    gap: 6,
+    padding: 16,
+    gap: 10,
   },
-  dailyGoalDone: {
+  focusCardDone: {
     backgroundColor: "#eaf6ff",
     borderColor: "#b7d8f4",
   },
-  dailyGoalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  dailyGoalStatus: { color: "#236b35", fontSize: 12, fontWeight: "700" },
-  dailyGoalTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
-  dailyGoalMeta: { color: theme.colors.muted, fontSize: 12 },
-  progressTrack: {
-    marginTop: 4,
-    width: "100%",
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "#c8e6ce",
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "#2e7d32",
-  },
-  dailyGoalItem: { color: theme.colors.text, fontSize: 13, lineHeight: 19 },
-  dailyGoalItemChecked: { color: "#236b35", fontWeight: "600" },
-  dailyGoalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 4 },
-  dailyGoalBtn: {
+  focusHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  focusLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
+  focusStatus: { color: "#7c5a00", fontSize: 12, fontWeight: "700", backgroundColor: "#fff3cd", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
+  focusStatusDone: { color: "#1e5a2a", backgroundColor: "#c8f0d0" },
+  focusTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  focusDesc: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
+
+  chatBtn: {
     backgroundColor: theme.colors.accent,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginTop: 2,
+  },
+  chatBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  secondaryBtn: {
+    backgroundColor: "#d9ecdf",
+    borderRadius: 12,
+    paddingVertical: 10,
     alignItems: "center",
   },
-  dailyGoalBtnNeutral: { backgroundColor: theme.colors.border },
-  dailyGoalBtnSecondary: { backgroundColor: "#d9ecdf" },
-  dailyGoalBtnText: { color: "#fff", fontWeight: "700", fontSize: 12 },
-  dailyGoalBtnTextNeutral: { color: theme.colors.text, fontWeight: "700", fontSize: 12 },
-  dailyGoalBtnTextSecondary: { color: "#236b35", fontWeight: "700", fontSize: 12 },
-  streakRow: {
-    marginTop: 6,
-    paddingTop: 8,
+  secondaryBtnText: { color: "#236b35", fontWeight: "700", fontSize: 13 },
+
+  // Racha e insignias
+  streakSection: {
+    marginTop: 4,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: "#c8e6ce",
-    gap: 4,
+    gap: 10,
   },
-  streakText: { color: "#236b35", fontSize: 12, fontWeight: "700" },
-  badgeText: { color: "#1e4e9d", fontSize: 12, fontWeight: "700" },
+  streakMainRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  streakNumber: { fontSize: 32, fontWeight: "700", color: "#e65100" },
+  streakInfo: { gap: 2, flex: 1 },
+  streakLabel: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  streakHint: { color: theme.colors.muted, fontSize: 12 },
+  badgesRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  badgeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: theme.colors.border,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  badgeChipUnlocked: { backgroundColor: "#fff3cd", borderWidth: 1, borderColor: "#f0c040" },
+  badgeIcon: { fontSize: 16 },
+  badgeLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "600" },
+  badgeLabelUnlocked: { color: "#7c5a00", fontWeight: "700" },
 
+  // Stats
   statsRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   statCard: {
     width: "47%",
@@ -312,6 +328,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   activityLine: { color: theme.colors.text, fontSize: 13, lineHeight: 18 },
+  activityBold: { fontWeight: "700" },
   activityHint: { color: theme.colors.muted, fontSize: 12, marginTop: 4 },
 
   trendCard: {
@@ -322,44 +339,16 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 8,
   },
-  chartRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 6,
-  },
-  chartColumn: {
-    alignItems: "center",
-    gap: 4,
-    flex: 1,
-  },
-  chartBars: {
-    height: 34,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 2,
-  },
-  chartBar: {
-    width: 5,
-    borderRadius: 2,
-  },
-  chartBarGrammar: {
-    backgroundColor: "#1e88e5",
-  },
-  chartBarFluency: {
-    backgroundColor: "#f9a825",
-  },
-  chartBarPronunciation: {
-    backgroundColor: "#43a047",
-  },
-  chartDay: {
-    color: theme.colors.muted,
-    fontSize: 10,
-  },
-  chartLegend: {
-    color: theme.colors.muted,
-    fontSize: 11,
-  },
+  chartRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 6 },
+  chartColumn: { alignItems: "center", gap: 4, flex: 1 },
+  chartBars: { height: 34, flexDirection: "row", alignItems: "flex-end", gap: 2 },
+  chartBar: { width: 5, borderRadius: 2 },
+  chartBarGrammar: { backgroundColor: "#1e88e5" },
+  chartBarFluency: { backgroundColor: "#f9a825" },
+  chartBarPronunciation: { backgroundColor: "#43a047" },
+  chartDay: { color: theme.colors.muted, fontSize: 10 },
+  chartLegend: { color: theme.colors.muted, fontSize: 11 },
+
   diagnosticCard: {
     backgroundColor: "#fffbeb",
     borderRadius: 16,
@@ -372,18 +361,5 @@ const styles = StyleSheet.create({
   diagnosticDesc: { color: "#7c5a00", fontSize: 13, lineHeight: 19 },
   diagnosticCta: { color: theme.colors.accent, fontWeight: "700", fontSize: 13, marginTop: 4 },
 
-  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  quickCard: {
-    width: "47%",
-    backgroundColor: theme.colors.panel,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 16,
-    alignItems: "center",
-    gap: 8,
-  },
-  quickIcon: { fontSize: 28 },
-  quickLabel: { color: theme.colors.text, fontWeight: "600", fontSize: 13 },
   footerSpace: { height: 8 },
 });
