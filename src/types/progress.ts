@@ -23,6 +23,7 @@ export type Weakness = {
 export type LessonPlan = {
   objective: string;
   focusArea: SkillArea;
+  accentFocus?: string;
   warmupQuestions: string[];
   activities: string[];
 };
@@ -36,6 +37,7 @@ export type SessionResult = {
   grammarDelta: number;
   fluencyDelta: number;
   pronunciationDelta: number;
+  listeningDelta?: number;
   notes: string;
 };
 

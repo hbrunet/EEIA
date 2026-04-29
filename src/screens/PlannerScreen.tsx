@@ -1,7 +1,7 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useAppState } from "../state/AppContext";
 import { WeeklyPlanItem } from "../types/progress";
-import { theme } from "../ui/theme";
+import { styles } from "./PlannerScreen.styles";
 
 const DAY_ES: Record<WeeklyPlanItem["day"], string> = {
   Mon: "Lunes",
@@ -131,74 +131,3 @@ export function PlannerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
-  content: { padding: 20, gap: 16, paddingBottom: 40 },
-  title: { fontSize: 22, fontWeight: "700", color: theme.colors.text, marginTop: 12 },
-  goalCard: {
-    backgroundColor: "#e8f5e9",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#c8e6c9",
-    padding: 14,
-    gap: 6,
-  },
-  goalLabel: { color: "#2e7d32", fontWeight: "700", fontSize: 13 },
-  goalText: { color: "#1b5e20", fontSize: 15, lineHeight: 21 },
-  sectionBlock: { gap: 10 },
-  sectionTitle: { fontWeight: "700", color: theme.colors.muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.8 },
-  todayCard: {
-    backgroundColor: theme.colors.panel,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 14,
-    gap: 12,
-  },
-  todayRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
-  todayIcon: { fontSize: 28 },
-  todayInfo: { flex: 1, gap: 4 },
-  todayObjective: { color: theme.colors.text, fontWeight: "700", fontSize: 15, lineHeight: 21 },
-  todayMeta: { color: theme.colors.muted, fontSize: 12 },
-  warmupBlock: { gap: 6, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 },
-  warmupTitle: { color: theme.colors.muted, fontSize: 12, fontWeight: "600" },
-  warmupItem: { color: theme.colors.text, fontSize: 13, lineHeight: 19 },
-  dayRow: {
-    backgroundColor: theme.colors.panel,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 12,
-  },
-  dayRowToday: { borderColor: theme.colors.accent, backgroundColor: "#f0f8fa" },
-  dayLeft: { flexDirection: "row", gap: 10, alignItems: "flex-start", flex: 1 },
-  dayIcon: { fontSize: 22, marginTop: 1 },
-  dayTextBlock: { flex: 1 },
-  dayName: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
-  dayNameToday: { color: theme.colors.accent },
-  dayObjective: { color: theme.colors.text, fontSize: 14, lineHeight: 20, marginTop: 2, flexShrink: 1 },
-  weaknessCard: {
-    backgroundColor: theme.colors.panel,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 14,
-    gap: 12,
-  },
-  weaknessRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  dot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
-  weaknessInfo: { flex: 1, gap: 2 },
-  weaknessDetail: { color: theme.colors.text, fontSize: 14 },
-  weaknessArea: { color: theme.colors.muted, fontSize: 11 },
-  profileRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  profileChip: {
-    backgroundColor: theme.colors.accent,
-    color: "#fff",
-    fontWeight: "700",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    fontSize: 13,
-  },
-  profileGoal: { color: theme.colors.muted, fontSize: 12, flex: 1 },
-});

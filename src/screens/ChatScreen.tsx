@@ -1,5 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
@@ -7,6 +8,7 @@ import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLangua
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
+import { styles } from "./ChatScreen.styles";
 
 type ChatMessage = {
   id: string;
@@ -18,6 +20,7 @@ type ChatMessage = {
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
+const CHAT_DRAFT_KEY = "eeia.chat.draft.v1";
 const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
   en: "Inglés",
   es: "Español",
@@ -94,7 +97,7 @@ export function ChatScreen() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
-  const [lookupSheetExpanded, setLookupSheetExpanded] = useState(false);
+
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
   const [speechRate, setSpeechRate] = useState<SpeechRate>("normal");
@@ -192,6 +195,47 @@ export function ChatScreen() {
     });
   }
 
+  // Restore chat draft on mount
+  useEffect(() => {
+    AsyncStorage.getItem(CHAT_DRAFT_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const draft = JSON.parse(raw) as {
+            messages: ChatMessage[];
+            phase: "setup" | "practice";
+            selectedSuggestedTopic: string | null;
+            session: typeof sessionRef.current;
+          };
+          if (Array.isArray(draft.messages) && draft.messages.length > 0) {
+            setMessages(draft.messages);
+            setPhase(draft.phase ?? "setup");
+            setSelectedSuggestedTopic(draft.selectedSuggestedTopic ?? null);
+            if (draft.session) sessionRef.current = draft.session;
+            setTimeout(() => scrollToLatest(false), 150);
+          }
+        } catch {
+          // corrupt draft — ignore
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Persist chat draft whenever messages or phase change
+  useEffect(() => {
+    if (messages.length === 0 && phase === "setup") {
+      AsyncStorage.removeItem(CHAT_DRAFT_KEY).catch(() => {});
+      return;
+    }
+    const draft = {
+      messages,
+      phase,
+      selectedSuggestedTopic,
+      session: sessionRef.current,
+    };
+    AsyncStorage.setItem(CHAT_DRAFT_KEY, JSON.stringify(draft)).catch(() => {});
+  }, [messages, phase, selectedSuggestedTopic]);
+
   useEffect(() => {
     return () => {
       Speech.stop();
@@ -249,6 +293,7 @@ export function ChatScreen() {
 
   async function finalizeChatSession() {
     await saveChatSessionCheckpoint(true);
+    AsyncStorage.removeItem(CHAT_DRAFT_KEY).catch(() => {});
 
     sessionRef.current = {
       startedAt: new Date().toISOString(),
@@ -261,10 +306,11 @@ export function ChatScreen() {
   }
 
   function onClearChat() {
-    Alert.alert(
-      "Nueva sesión",
-      "¿Querés empezar una conversación nueva? El historial actual se borrará.",
-      [
+    const turnCount = sessionRef.current.turns;
+    const detail = turnCount > 0
+      ? `Tenés ${turnCount} ${turnCount === 1 ? "turno" : "turnos"} en esta sesión. El historial se borrará y no podrás recuperarlo.`
+      : "El historial actual se borrará.";
+    Alert.alert("¿Empezar sesión nueva?", detail, [
         { text: "Cancelar", style: "cancel" },
         {
           text: "Nueva sesión",
@@ -440,7 +486,6 @@ export function ChatScreen() {
     if (!cleaned) return;
 
     setLookupOpen(true);
-    setLookupSheetExpanded(true);
     setLookupQuery(cleaned);
     setLookupResult(null);
     setLookupError(null);
@@ -472,7 +517,10 @@ export function ChatScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Tutor Chat</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>Tutor Chat</Text>
+            <Text style={[styles.statusDot, { color: lastSource && lastSource !== "fallback" ? theme.colors.accent : theme.colors.accentAlt }]}>●</Text>
+          </View>
           {messages.length > 0 && (
             <Pressable style={styles.newSessionBtn} onPress={onClearChat}>
               <Text style={styles.newSessionText}>Nueva sesión</Text>
@@ -536,7 +584,19 @@ export function ChatScreen() {
               </View>
             )}
             {!profileLevelConfigured && (
-              <Text style={styles.empty}>Empezá saludando al tutor para configurar tu sesión.</Text>
+              <View style={styles.welcomeCard}>
+                <Text style={styles.welcomeTitle}>¡Hola! Soy tu tutor de inglés</Text>
+                <Text style={styles.welcomeText}>
+                  Voy a ayudarte a practicar de forma personalizada. Para empezar, solo saluda o tocá el botón de abajo.
+                </Text>
+                <Pressable
+                  style={[styles.welcomeStartBtn, actionDisabled && styles.buttonDisabled]}
+                  disabled={actionDisabled}
+                  onPress={() => void onSend("Hello! I want to start practicing English.")}
+                >
+                  <Text style={styles.welcomeStartBtnText}>Saludar al tutor →</Text>
+                </Pressable>
+              </View>
             )}
           </>
         )}
@@ -614,6 +674,11 @@ export function ChatScreen() {
             )}
           </View>
         ))}
+        {loading && (
+          <View style={[styles.bubble, styles.assistantBubble, styles.typingBubble]}>
+            <Text style={styles.typingDots}>● ● ●</Text>
+          </View>
+        )}
         {lastPronunciationHint && (
           <View style={styles.pronunciationBox}>
             <Text style={styles.pronunciationLabel}>🗣 Pronunciación</Text>
@@ -622,14 +687,94 @@ export function ChatScreen() {
         )}
       </ScrollView>
 
+      {/* Dictionary inline panel */}
+      {lookupOpen && (
+        <View style={styles.lookupPanel}>
+          <View style={styles.lookupPanelHeader}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.lookupHistoryScroll}
+              keyboardShouldPersistTaps="handled"
+            >
+              {recentLookups.map((term) => (
+                <Pressable
+                  key={`rh-${term}`}
+                  style={styles.lookupHistoryChip}
+                  onPress={() => {
+                    setLookupQuery(term);
+                    setLookupResult(null);
+                    setLookupError(null);
+                    void (async () => {
+                      setLookupLoading(true);
+                      try {
+                        const result = await lookupTutorTerm(term, progress?.profile.level);
+                        setLookupResult(result);
+                        await recordLookupTerm(term);
+                      } catch (e) {
+                        setLookupError(e instanceof Error ? e.message : "Error al consultar.");
+                      } finally {
+                        setLookupLoading(false);
+                      }
+                    })();
+                  }}
+                >
+                  <Text style={styles.lookupHistoryChipText}>{term}</Text>
+                </Pressable>
+              ))}
+              {recentLookups.length > 0 && (
+                <Pressable
+                  style={styles.lookupClearChip}
+                  onPress={() => { void clearLookupHistory(); setLookupResult(null); setLookupError(null); }}
+                >
+                  <Text style={styles.lookupClearChipText}>Limpiar</Text>
+                </Pressable>
+              )}
+            </ScrollView>
+            <Pressable
+              style={styles.lookupCloseBtn}
+              onPress={() => { setLookupOpen(false); setLookupError(null); }}
+            >
+              <Text style={styles.lookupCloseBtnText}>✕</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.lookupInputRow}>
+            <TextInput
+              value={lookupQuery}
+              onChangeText={setLookupQuery}
+              placeholder="Palabra o frase..."
+              placeholderTextColor={theme.colors.muted}
+              style={styles.lookupInput}
+              returnKeyType="search"
+              onSubmitEditing={() => { if (lookupQuery.trim()) void onLookupPress(); }}
+            />
+            <Pressable
+              style={[styles.lookupButton, (!lookupQuery.trim() || lookupLoading) && styles.buttonDisabled]}
+              disabled={!lookupQuery.trim() || lookupLoading}
+              onPress={() => { void onLookupPress(); }}
+            >
+              <Text style={styles.lookupButtonText}>{lookupLoading ? "⏳" : "Buscar"}</Text>
+            </Pressable>
+          </View>
+
+          {lookupError && <Text style={styles.lookupErrorText}>{lookupError}</Text>}
+          {lookupResult && (
+            <View style={styles.lookupResult}>
+              <View style={styles.lookupResultRow}>
+                <Text style={styles.lookupWord}>{lookupResult.term}</Text>
+                <Text style={styles.lookupTranslation}>{lookupResult.translation}</Text>
+              </View>
+              <Text style={styles.lookupExample} numberOfLines={2}>Ej: {lookupResult.example}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
       {/* Footer fijo */}
       <View style={styles.footer}>
         {error && <Text style={styles.error}>{error}</Text>}
-        {lastSource && (
-          <Text style={styles.sourceTag}>
-            {lastSource === "groq" ? "Groq (Llama)" : lastSource === "gemini" ? "Gemini" : lastSource === "openai" ? "OpenAI" : "Demo"}
-          </Text>
-        )}
+
         {voiceClarity !== null && transcriptionLanguage === "en" && (() => {
           const lp = voiceClarity;
           const level = lp > -0.3 ? "alta" : lp > -0.55 ? "media" : "baja";
@@ -644,26 +789,28 @@ export function ChatScreen() {
             </View>
           );
         })()}
-        <View style={styles.transcriptionLangRow}>
-          <Text style={styles.transcriptionLangLabel}>Transcripción de voz a:</Text>
-          <View style={styles.transcriptionLangOptions}>
-            {(["en", "es"] as const).map((language) => {
-              const selected = transcriptionLanguage === language;
-              return (
-                <Pressable
-                  key={`transcript-lang-${language}`}
-                  style={[styles.transcriptionLangChip, selected && styles.transcriptionLangChipActive]}
-                  onPress={() => { setTranscriptionLanguage(language); setVoiceClarity(null); }}
-                  disabled={isTranscribing || Boolean(recording) || loading}
-                >
-                  <Text style={[styles.transcriptionLangChipText, selected && styles.transcriptionLangChipTextActive]}>
-                    {TRANSCRIPTION_LANGUAGE_META[language]}
-                  </Text>
-                </Pressable>
-              );
-            })}
+        {(Boolean(recording) || isTranscribing) && (
+          <View style={styles.transcriptionLangRow}>
+            <Text style={styles.transcriptionLangLabel}>Transcripción de voz a:</Text>
+            <View style={styles.transcriptionLangOptions}>
+              {(["en", "es"] as const).map((language) => {
+                const selected = transcriptionLanguage === language;
+                return (
+                  <Pressable
+                    key={`transcript-lang-${language}`}
+                    style={[styles.transcriptionLangChip, selected && styles.transcriptionLangChipActive]}
+                    onPress={() => { setTranscriptionLanguage(language); setVoiceClarity(null); }}
+                    disabled={isTranscribing || loading}
+                  >
+                    <Text style={[styles.transcriptionLangChipText, selected && styles.transcriptionLangChipTextActive]}>
+                      {TRANSCRIPTION_LANGUAGE_META[language]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-        </View>
+        )}
         <View style={styles.inputRow}>
           <TextInput
             value={message}
@@ -700,699 +847,7 @@ export function ChatScreen() {
         </View>
       </View>
 
-      {/* Dictionary FAB */}
-      <Pressable
-        style={[styles.lookupFab, lookupOpen && styles.lookupFabActive]}
-        onPress={() => {
-          setLookupOpen((v) => !v);
-          setLookupSheetExpanded(false);
-          setLookupError(null);
-        }}
-      >
-        <Text style={styles.lookupFabText}>📖</Text>
-      </Pressable>
-
-      {/* Dictionary floating panel */}
-      <Modal
-        visible={lookupOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
-          setLookupOpen(false);
-          setLookupSheetExpanded(false);
-        }}
-      >
-        <Pressable
-          style={styles.lookupBackdrop}
-          onPress={() => {
-            setLookupOpen(false);
-            setLookupSheetExpanded(false);
-          }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.lookupSheetWrap}
-          >
-            <View
-              style={[
-                styles.lookupFloatingCard,
-                lookupSheetExpanded ? styles.lookupFloatingCardExpanded : styles.lookupFloatingCardCompact,
-              ]}
-              onStartShouldSetResponder={() => true}
-            >
-              <Pressable
-                style={styles.lookupSheetToggle}
-                onPress={() => setLookupSheetExpanded((value) => !value)}
-              >
-                <View style={styles.lookupDragHandle} />
-                <Text style={styles.lookupSheetToggleText}>
-                  {lookupSheetExpanded ? "Modo compacto" : "Expandir"}
-                </Text>
-              </Pressable>
-              <Text style={styles.lookupTitle}>Diccionario rápido</Text>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.lookupScrollContent}
-              >
-                {recentLookups.length > 0 && (
-                  <View style={styles.lookupHistoryBlock}>
-                    <View style={styles.lookupHistoryHeader}>
-                      <Text style={styles.lookupHint}>Recientes</Text>
-                      <Pressable
-                        onPress={() => {
-                          void clearLookupHistory();
-                          setLookupResult(null);
-                          setLookupError(null);
-                        }}
-                      >
-                        <Text style={styles.lookupClearText}>Limpiar</Text>
-                      </Pressable>
-                    </View>
-
-                    {recentLookupWords.length > 0 && (
-                      <View style={styles.lookupHistoryGroup}>
-                        <Text style={styles.lookupGroupTitle}>Palabras</Text>
-                        <View style={styles.lookupHistoryRow}>
-                          {recentLookupWords.map((term) => (
-                            <Pressable
-                              key={`recent-word-${term}`}
-                              style={styles.lookupHistoryChip}
-                              onPress={() => {
-                                setLookupQuery(term);
-                                setLookupResult(null);
-                                setLookupError(null);
-                                void (async () => {
-                                  setLookupLoading(true);
-                                  try {
-                                    const result = await lookupTutorTerm(term, progress?.profile.level);
-                                    setLookupResult(result);
-                                    await recordLookupTerm(term);
-                                  } catch (lookupIssue) {
-                                    setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
-                                  } finally {
-                                    setLookupLoading(false);
-                                  }
-                                })();
-                              }}
-                            >
-                              <Text style={styles.lookupHistoryChipText}>{term}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      </View>
-                    )}
-
-                    {recentLookupPhrases.length > 0 && (
-                      <View style={styles.lookupHistoryGroup}>
-                        <Text style={styles.lookupGroupTitle}>Frases</Text>
-                        <View style={styles.lookupHistoryRow}>
-                          {recentLookupPhrases.map((term) => (
-                            <Pressable
-                              key={`recent-phrase-${term}`}
-                              style={styles.lookupHistoryChip}
-                              onPress={() => {
-                                setLookupQuery(term);
-                                setLookupResult(null);
-                                setLookupError(null);
-                                void (async () => {
-                                  setLookupLoading(true);
-                                  try {
-                                    const result = await lookupTutorTerm(term, progress?.profile.level);
-                                    setLookupResult(result);
-                                    await recordLookupTerm(term);
-                                  } catch (lookupIssue) {
-                                    setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
-                                  } finally {
-                                    setLookupLoading(false);
-                                  }
-                                })();
-                              }}
-                            >
-                              <Text style={styles.lookupHistoryChipText}>{term}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                  </View>
-                )}
-                <TextInput
-                  value={lookupQuery}
-                  onChangeText={setLookupQuery}
-                  placeholder="Ej: though, take off, meeting"
-                  placeholderTextColor={theme.colors.muted}
-                  style={styles.lookupInput}
-                />
-                <Pressable
-                  style={[styles.lookupButton, (!lookupQuery.trim() || lookupLoading) && styles.buttonDisabled]}
-                  disabled={!lookupQuery.trim() || lookupLoading}
-                  onPress={() => {
-                    void onLookupPress();
-                  }}
-                >
-                  <Text style={styles.lookupButtonText}>{lookupLoading ? "Buscando..." : "Consultar"}</Text>
-                </Pressable>
-                {lookupError && <Text style={styles.error}>{lookupError}</Text>}
-                {lookupResult && (
-                  <View style={styles.lookupResult}>
-                    <Text style={styles.lookupWord}>{lookupResult.term}</Text>
-                    <Text style={styles.lookupTranslation}>{lookupResult.translation}</Text>
-                    <Text style={styles.lookupExplanation}>{lookupResult.explanation}</Text>
-                    {lookupResult.pronunciation ? (
-                      <Text style={styles.lookupPronunciation}>Pronunciación: {lookupResult.pronunciation}</Text>
-                    ) : null}
-                    <Text style={styles.lookupExample}>Ejemplo: {lookupResult.example}</Text>
-                  </View>
-                )}
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </Pressable>
-      </Modal>
-
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
-    gap: 6,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: theme.colors.text,
-  },
-  newSessionBtn: {
-    backgroundColor: theme.colors.border,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  newSessionText: {
-    color: theme.colors.muted,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  helper: {
-    fontSize: 13,
-    color: theme.colors.muted,
-  },
-  suggestCard: {
-    backgroundColor: theme.colors.panel,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 10,
-    gap: 8,
-    marginTop: 8,
-  },
-  suggestTitle: {
-    color: theme.colors.text,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  suggestHelper: {
-    color: theme.colors.muted,
-    fontSize: 12,
-  },
-  suggestGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  suggestChip: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    maxWidth: "100%",
-  },
-  suggestChipActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
-  },
-  suggestChipText: {
-    color: theme.colors.text,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  suggestChipTextActive: {
-    color: theme.colors.accent,
-  },
-  suggestStartBtn: {
-    marginTop: 2,
-    borderRadius: 10,
-    backgroundColor: theme.colors.accent,
-    alignItems: "center",
-    paddingVertical: 9,
-  },
-  suggestStartBtnDisabled: {
-    opacity: 0.5,
-  },
-  suggestStartBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  scrollArea: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  scrollContent: {
-    paddingVertical: 10,
-    gap: 10,
-    flexGrow: 1,
-  },
-  empty: {
-    color: theme.colors.muted,
-    textAlign: "center",
-    marginTop: 40,
-  },
-  bubble: {
-    borderRadius: 12,
-    padding: 10,
-    maxWidth: "82%",
-  },
-  userBubble: {
-    alignSelf: "flex-end",
-    backgroundColor: "#d6ecf2",
-  },
-  assistantBubble: {
-    alignSelf: "flex-start",
-    backgroundColor: "#fbe8c7",
-  },
-  bubbleText: {
-    color: theme.colors.text,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  listenMessageRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 6,
-    marginTop: 8,
-  },
-  listenMessageBtn: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  listenMessageBtnActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
-  },
-  listenMessageBtnText: {
-    color: theme.colors.text,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  speechRateChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.panel,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  speechRateChipActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
-  },
-  speechRateChipText: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  speechRateChipTextActive: {
-    color: theme.colors.accent,
-  },
-  correctionHintWrap: {
-    marginTop: 8,
-    gap: 6,
-  },
-  correctionHintChip: {
-    alignSelf: "flex-start",
-    backgroundColor: "#ffeb3b",
-    borderColor: "#fbc02d",
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  correctionHintChipActive: {
-    backgroundColor: "#ffd54f",
-  },
-  correctionHintChipText: {
-    color: "#5d4037",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  correctionHintPanel: {
-    backgroundColor: "#fff8e1",
-    borderColor: "#fbc02d",
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 8,
-    gap: 4,
-  },
-  correctionHintTitle: {
-    color: "#8d6e63",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  correctionHintText: {
-    color: theme.colors.text,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  lookupInlineWord: {
-    textDecorationLine: "underline",
-    textDecorationColor: theme.colors.accent,
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    paddingTop: 8,
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-  },
-  error: {
-    color: "#b00020",
-    fontSize: 13,
-  },
-  sourceTag: {
-    color: theme.colors.muted,
-    fontSize: 11,
-  },
-  clarityChip: {
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 4,
-  },
-  clarityChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  transcriptionLangRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  transcriptionLangLabel: {
-    color: theme.colors.muted,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  transcriptionLangOptions: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  transcriptionLangChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.panel,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  transcriptionLangChipActive: {
-    borderColor: theme.colors.accent,
-    backgroundColor: "#dff3f8",
-  },
-  transcriptionLangChipText: {
-    color: theme.colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  transcriptionLangChipTextActive: {
-    color: theme.colors.accent,
-  },
-  lookupFab: {
-    position: "absolute",
-    right: 16,
-    bottom: 186,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: theme.colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    zIndex: 10,
-  },
-  lookupFabActive: {
-    backgroundColor: "#005c6e",
-  },
-  lookupFabText: {
-    fontSize: 22,
-  },
-  lookupBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.35)",
-    justifyContent: "flex-end",
-  },
-  lookupSheetWrap: {
-    width: "100%",
-    justifyContent: "flex-end",
-  },
-  lookupFloatingCard: {
-    width: "100%",
-    backgroundColor: theme.colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 32,
-  },
-  lookupFloatingCardCompact: {
-    minHeight: "56%",
-    maxHeight: "62%",
-  },
-  lookupFloatingCardExpanded: {
-    minHeight: "82%",
-    maxHeight: "90%",
-  },
-  lookupSheetToggle: {
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-    gap: 4,
-  },
-  lookupDragHandle: {
-    alignSelf: "center",
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.border,
-    marginBottom: 0,
-  },
-  lookupSheetToggleText: {
-    color: theme.colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  lookupScrollContent: {
-    gap: 10,
-    paddingBottom: 4,
-  },
-  lookupTitle: {
-    color: theme.colors.text,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  lookupHint: {
-    color: theme.colors.muted,
-    fontSize: 11,
-  },
-  lookupHistoryBlock: {
-    gap: 6,
-  },
-  lookupHistoryHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  lookupClearText: {
-    color: theme.colors.accent,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  lookupHistoryGroup: {
-    gap: 6,
-  },
-  lookupGroupTitle: {
-    color: theme.colors.muted,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  lookupHistoryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  lookupHistoryChip: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  lookupHistoryChipText: {
-    color: theme.colors.text,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  lookupInput: {
-    backgroundColor: theme.colors.background,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: theme.colors.text,
-    fontSize: 14,
-  },
-  lookupButton: {
-    backgroundColor: theme.colors.accent,
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  lookupButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  lookupResult: {
-    backgroundColor: theme.colors.background,
-    borderRadius: 10,
-    padding: 10,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  lookupWord: {
-    color: theme.colors.text,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  lookupTranslation: {
-    color: theme.colors.accent,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  lookupExplanation: {
-    color: theme.colors.text,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  lookupPronunciation: {
-    color: theme.colors.muted,
-    fontSize: 12,
-  },
-  lookupExample: {
-    color: theme.colors.text,
-    fontSize: 12,
-    fontStyle: "italic",
-  },
-  inputRow: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "flex-end",
-  },
-  input: {
-    flex: 1,
-    backgroundColor: theme.colors.panel,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 72,
-    maxHeight: 120,
-    padding: 12,
-    color: theme.colors.text,
-    textAlignVertical: "top",
-    fontSize: 14,
-  },
-  actionBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionBtnSend: {
-    backgroundColor: theme.colors.accent,
-  },
-  actionBtnRecording: {
-    backgroundColor: "#e53935",
-  },
-  actionBtnText: {
-    fontSize: 20,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  practiceBadge: {
-    backgroundColor: "#e3f2fd",
-    borderRadius: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    alignSelf: "flex-start" as const,
-    borderLeftWidth: 3,
-    borderLeftColor: "#1976d2",
-  },
-  practiceBadgeText: {
-    color: "#1565c0",
-    fontSize: 12,
-    fontWeight: "600" as const,
-  },
-  pronunciationBox: {
-    backgroundColor: "#ede7f6",
-    borderRadius: 10,
-    padding: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: "#7c4dff",
-  },
-  pronunciationLabel: {
-    fontWeight: "700" as const,
-    fontSize: 12,
-    color: "#4a148c",
-    marginBottom: 2,
-  },
-  pronunciationText: {
-    color: "#311b92",
-    fontSize: 13,
-  },
-});

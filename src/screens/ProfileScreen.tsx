@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
+import { styles } from "./ProfileScreen.styles";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1"] as const;
 
@@ -119,60 +120,3 @@ export function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
-  content: { padding: 20, paddingBottom: 40, gap: 12 },
-  title: { color: theme.colors.text, fontSize: 22, fontWeight: "700", marginTop: 12 },
-  helper: { color: theme.colors.muted, fontSize: 13, lineHeight: 19 },
-  card: {
-    backgroundColor: theme.colors.panel,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 16,
-    padding: 14,
-    gap: 10,
-  },
-  label: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
-  input: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: theme.colors.text,
-    backgroundColor: theme.colors.background,
-    fontSize: 14,
-  },
-  levelGrid: { gap: 8 },
-  levelBtn: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: theme.colors.background,
-  },
-  levelBtnActive: { borderColor: theme.colors.accent, backgroundColor: "rgba(36, 99, 235, 0.12)" },
-  levelText: { color: theme.colors.text, fontWeight: "700", fontSize: 14 },
-  levelTextActive: { color: theme.colors.accent },
-  levelHint: { color: theme.colors.muted, fontSize: 12, marginTop: 2 },
-  levelHintActive: { color: theme.colors.text },
-  saveBtn: {
-    marginTop: 6,
-    backgroundColor: theme.colors.accent,
-    borderRadius: 10,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  resetBtn: {
-    marginTop: 4,
-    backgroundColor: "#fff3f2",
-    borderColor: "#f44336",
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  resetBtnText: { color: "#c62828", fontWeight: "700", fontSize: 13 },
-});
