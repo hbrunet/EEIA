@@ -571,6 +571,48 @@ app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
+app.post("/tutor/translate", upload.single("audio"), async (req, res) => {
+  if (!groq) return res.status(503).json({ error: "groq_not_configured" });
+  if (!req.file) return res.status(400).json({ error: "audio file required" });
+
+  try {
+    // Step 1: transcribe in Spanish (or auto-detect)
+    const transcription = await groq.audio.transcriptions.create({
+      file: fs.createReadStream(req.file.path),
+      model: "whisper-large-v3",
+      language: "es",
+      response_format: "json",
+    });
+    const original = String(transcription.text || "").trim();
+    if (!original) {
+      return res.json({ original: "", translated: "" });
+    }
+
+    // Step 2: translate to English via LLM
+    const completion = await groq.chat.completions.create({
+      model,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a translator for an English learning app. " +
+            "Translate the following Spanish text to natural, fluent English as if the learner said it directly. " +
+            "Return ONLY the English translation, nothing else.",
+        },
+        { role: "user", content: original },
+      ],
+    });
+    const translated = String(completion.choices?.[0]?.message?.content || "").trim();
+    res.json({ original, translated });
+  } catch (err) {
+    console.error("Translation failed", err);
+    res.status(500).json({ error: "translation_failed", detail: err.message });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
+});
+
 app.post("/tutor/pronunciation", upload.single("audio"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "audio file required" });
 

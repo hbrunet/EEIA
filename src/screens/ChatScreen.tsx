@@ -4,7 +4,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
+import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
@@ -20,10 +20,12 @@ type ChatMessage = {
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
 const CHAT_DRAFT_KEY = "eeia.chat.draft.v1";
 const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
   en: "Inglés",
   es: "Español",
+  auto: "Auto",
 };
 
 type SpeechRate = "normal" | "slow";
@@ -98,11 +100,15 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
 
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("auto");
+  const [translateMode, setTranslateMode] = useState(false); // ES→EN
+  const [lastTranslationOriginal, setLastTranslationOriginal] = useState<string | null>(null);
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
   const [speechRate, setSpeechRate] = useState<SpeechRate>("normal");
   const [availableVoices, setAvailableVoices] = useState<Speech.Voice[]>([]);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [lastActivityAt, setLastActivityAt] = useState<number>(Date.now());
+  const [isInactive, setIsInactive] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const isCheckpointSavingRef = useRef(false);
   const sessionRef = useRef<{
@@ -250,6 +256,13 @@ export function ChatScreen() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      setIsInactive(Date.now() - lastActivityAt > INACTIVITY_TIMEOUT_MS);
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [lastActivityAt]);
+
+  useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () => {
       scrollToLatest(false);
       setTimeout(() => scrollToLatest(true), 80);
@@ -363,6 +376,8 @@ export function ChatScreen() {
           currentTopic: sessionRef.current.topic || undefined,
       } : undefined);
       setLastSource(response.source || null);
+      setLastActivityAt(Date.now());
+      setIsInactive(false);
           const correctionText = response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null;
       setLastPronunciationHint(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null" ? response.pronunciationHint : null);
           const hasCorrection = Boolean(correctionText);
@@ -425,17 +440,24 @@ export function ChatScreen() {
 
   async function onMicPress() {
     if (recording) {
-      // Stop recording and transcribe
+      // Stop recording and transcribe (or translate)
       setIsTranscribing(true);
       try {
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
         setRecording(null);
         if (uri) {
-          const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
-          setMessage(result.text);
-          if (transcriptionLanguage === "en") {
-            setVoiceClarity(result.avgLogprob);
+          if (translateMode) {
+            const result = await transcribeAndTranslate(uri);
+            setMessage(result.translated);
+            setLastTranslationOriginal(result.original || null);
+          } else {
+            const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
+            setMessage(result.text);
+            setLastTranslationOriginal(null);
+            if (transcriptionLanguage === "en" || (transcriptionLanguage === "auto" && result.avgLogprob !== null)) {
+              setVoiceClarity(result.avgLogprob);
+            }
           }
         }
       } catch (e) {
@@ -519,7 +541,7 @@ export function ChatScreen() {
         <View style={styles.headerRow}>
           <View style={styles.titleRow}>
             <Text style={styles.title}>Tutor Chat</Text>
-            <Text style={[styles.statusDot, { color: lastSource && lastSource !== "fallback" ? theme.colors.accent : theme.colors.accentAlt }]}>●</Text>
+            <Text style={[styles.statusDot, { color: !isInactive && lastSource && lastSource !== "fallback" ? theme.colors.accent : theme.colors.accentAlt }]}>●</Text>
           </View>
           {messages.length > 0 && (
             <Pressable style={styles.newSessionBtn} onPress={onClearChat}>
@@ -775,7 +797,7 @@ export function ChatScreen() {
       <View style={styles.footer}>
         {error && <Text style={styles.error}>{error}</Text>}
 
-        {voiceClarity !== null && transcriptionLanguage === "en" && (() => {
+        {voiceClarity !== null && !translateMode && (() => {
           const lp = voiceClarity;
           const level = lp > -0.3 ? "alta" : lp > -0.55 ? "media" : "baja";
           const color = lp > -0.3 ? "#2e7d32" : lp > -0.55 ? "#e65100" : "#b00020";
@@ -789,11 +811,18 @@ export function ChatScreen() {
             </View>
           );
         })()}
+        {lastTranslationOriginal !== null && (
+          <View style={[styles.clarityChip, { backgroundColor: "#eef6ff", borderColor: theme.colors.accent }]}>
+            <Text style={[styles.clarityChipText, { color: theme.colors.accent }]}>
+              🇦🇷 Dijiste: "{lastTranslationOriginal}"
+            </Text>
+          </View>
+        )}
         {(Boolean(recording) || isTranscribing) && (
           <View style={styles.transcriptionLangRow}>
-            <Text style={styles.transcriptionLangLabel}>Transcripción de voz a:</Text>
+            <Text style={styles.transcriptionLangLabel}>Idioma de voz:</Text>
             <View style={styles.transcriptionLangOptions}>
-              {(["en", "es"] as const).map((language) => {
+              {!translateMode && (["auto", "en", "es"] as const).map((language) => {
                 const selected = transcriptionLanguage === language;
                 return (
                   <Pressable
@@ -811,6 +840,25 @@ export function ChatScreen() {
             </View>
           </View>
         )}
+        <View style={styles.transcriptionLangRow}>
+          <Text style={styles.transcriptionLangLabel}>Modo:</Text>
+          <View style={styles.transcriptionLangOptions}>
+            <Pressable
+              style={[styles.transcriptionLangChip, !translateMode && styles.transcriptionLangChipActive]}
+              onPress={() => { setTranslateMode(false); setLastTranslationOriginal(null); }}
+              disabled={isTranscribing || loading}
+            >
+              <Text style={[styles.transcriptionLangChipText, !translateMode && styles.transcriptionLangChipTextActive]}>Transcribir</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.transcriptionLangChip, translateMode && styles.transcriptionLangChipActive]}
+              onPress={() => { setTranslateMode(true); setVoiceClarity(null); }}
+              disabled={isTranscribing || loading}
+            >
+              <Text style={[styles.transcriptionLangChipText, translateMode && styles.transcriptionLangChipTextActive]}>ES → EN 🌐</Text>
+            </Pressable>
+          </View>
+        </View>
         <View style={styles.inputRow}>
           <TextInput
             value={message}

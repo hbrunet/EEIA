@@ -82,11 +82,16 @@ export type TutorLookupResponse = {
   source?: "groq" | "fallback";
 };
 
-export type TranscriptionLanguage = "en" | "es";
+export type TranscriptionLanguage = "en" | "es" | "auto";
 
 export type TranscriptionResult = {
   text: string;
   avgLogprob: number | null;
+};
+
+export type TranslationResult = {
+  original: string;
+  translated: string;
 };
 
 export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "en"): Promise<TranscriptionResult> {
@@ -96,7 +101,9 @@ export async function transcribeAudio(audioUri: string, language: TranscriptionL
     type: "audio/m4a",
     name: "recording.m4a",
   } as any);
-  formData.append("language", language);
+  if (language !== "auto") {
+    formData.append("language", language);
+  }
 
   let response: Response;
 
@@ -112,6 +119,29 @@ export async function transcribeAudio(audioUri: string, language: TranscriptionL
   if (!response.ok) throw new Error(`Transcription failed: ${response.status}`);
   const data = await response.json();
   return { text: data.text as string, avgLogprob: typeof data.avgLogprob === "number" ? data.avgLogprob : null };
+}
+
+export async function transcribeAndTranslate(audioUri: string): Promise<TranslationResult> {
+  const formData = new FormData();
+  formData.append("audio", {
+    uri: audioUri,
+    type: "audio/m4a",
+    name: "recording.m4a",
+  } as any);
+
+  let response: Response;
+  try {
+    response = await fetch(`${env.apiBaseUrl}/tutor/translate`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    throw buildNetworkError("Translation request", error);
+  }
+
+  if (!response.ok) throw new Error(`Translation failed: ${response.status}`);
+  const data = await response.json();
+  return { original: data.original as string, translated: data.translated as string };
 }
 
 export async function assessPronunciation(
