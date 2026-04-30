@@ -816,6 +816,7 @@ export function ChatScreen() {
           </View>
         )}
 
+        {!hasTypedMessage && (
         <View style={styles.transcriptionLangRow}>
           <Text style={styles.transcriptionLangLabel}>Idioma:</Text>
           <View style={styles.transcriptionLangOptions}>
@@ -842,6 +843,7 @@ export function ChatScreen() {
             </Pressable>
           </View>
         </View>
+        )}
         <View style={styles.inputRow}>
           <TextInput
             value={message}
