@@ -555,7 +555,6 @@ app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(req.file.path),
       model: "whisper-large-v3",
-      task: "transcribe",
       ...(language ? { language } : {}),
       response_format: "verbose_json",
     });
@@ -581,7 +580,6 @@ app.post("/tutor/translate", upload.single("audio"), async (req, res) => {
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(req.file.path),
       model: "whisper-large-v3",
-      task: "transcribe",
       response_format: "json",
     });
     const original = String(transcription.text || "").trim();
