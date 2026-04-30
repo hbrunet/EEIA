@@ -5,55 +5,25 @@ import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
-import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
 import { styles } from "./ChatScreen.styles";
-
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  correctionHint?: string;
-  correctionExpanded?: boolean;
-};
+import { ChatMessage, SpeechRate, SPEECH_RATE_VALUE } from "./chat/types";
+import { cleanLookupToken } from "./chat/utils";
+import { ChatBubble } from "./chat/ChatBubble";
+import { TypingIndicator } from "./chat/TypingIndicator";
+import { LookupPanel } from "./chat/LookupPanel";
+import { TopicSuggestCard } from "./chat/TopicSuggestCard";
+import { WelcomeCard } from "./chat/WelcomeCard";
 
 const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
 const CHAT_DRAFT_KEY = "eeia.chat.draft.v1";
-type SpeechRate = "normal" | "slow";
-const SPEECH_RATE_VALUE: Record<SpeechRate, number> = { normal: 0.95, slow: 0.65 };
-const SPEECH_RATE_LABEL: Record<SpeechRate, string> = { normal: "Normal", slow: "Lento" };
 
 function isBeginnerLevel(level?: string): boolean {
   const normalized = String(level || "").trim().toUpperCase();
   return normalized === "A1" || normalized === "A2";
-}
-
-function cleanLookupToken(token: string): string {
-  return token
-    .replace(/^[^a-zA-Z0-9']+/, "")
-    .replace(/[^a-zA-Z0-9']+$/, "")
-    .trim();
-}
-
-const SPANISH_STOPWORDS = new Set([
-  "a","al","algo","alguien","algún","alguno","algunos","alguna","algunas",
-  "ante","antes","aunque","bien","bueno","cada","como","con","cual",
-  "cuando","de","del","donde","durante","él","ella","ellos","ellas",
-  "en","entre","eres","es","eso","esos","esta","está","estás","están",
-  "este","estos","fue","hay","hacia","hasta","le","les","lo","los",
-  "la","las","me","mi","muy","más","ni","no","nos","nosotros",
-  "nuestro","nuestra","o","os","para","pero","por","porque","que",
-  "quién","se","ser","si","sin","sobre","son","su","sus","también",
-  "te","tengo","tiene","tienen","todo","todos","tu","tú","un","una",
-  "unas","unos","vos","y","ya","yo",
-]);
-
-function isLikelySpanish(token: string): boolean {
-  if (/[áéíóúüñÁÉÍÓÚÜÑ]/.test(token)) return true;
-  return SPANISH_STOPWORDS.has(token.toLowerCase());
 }
 
 function getFriendlyTranscriptionError(error: unknown): string {
@@ -424,12 +394,8 @@ export function ChatScreen() {
       setLoading(false);
     }
 
-    if (!forcedMessage) {
-      setMessage("");
-    } else {
-      setMessage("");
-      setSelectedSuggestedTopic(null);
-    }
+    setMessage("");
+    if (forcedMessage) setSelectedSuggestedTopic(null);
     // Reset per-message state after send
     setLastTranslationOriginal(null);
     setTranscriptionLanguage("en");
@@ -520,6 +486,22 @@ export function ChatScreen() {
     }
   }
 
+  async function onHistoryItemPress(term: string) {
+    setLookupQuery(term);
+    setLookupResult(null);
+    setLookupError(null);
+    setLookupLoading(true);
+    try {
+      const result = await lookupTutorTerm(term, progress?.profile.level);
+      setLookupResult(result);
+      await recordLookupTerm(term);
+    } catch (e) {
+      setLookupError(e instanceof Error ? e.message : "Error al consultar.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
   function onToggleCorrection(messageId: string) {
     setMessages((current) => current.map((item) => {
       if (item.id !== messageId || !item.correctionHint) return item;
@@ -569,135 +551,38 @@ export function ChatScreen() {
         {messages.length === 0 && (
           <>
             {phase === "setup" && profileLevelConfigured && suggestedTopics.length > 0 && (
-              <View style={styles.suggestCard}>
-                <Text style={styles.suggestTitle}>Temas sugeridos para hoy</Text>
-                <Text style={styles.suggestHelper}>Elegí uno para arrancar más rápido según tu nivel y progreso.</Text>
-                <View style={styles.suggestGrid}>
-                  {suggestedTopics.map((topic) => {
-                    const selected = selectedSuggestedTopic === topic;
-                    return (
-                      <Pressable
-                        key={topic}
-                        style={[styles.suggestChip, selected && styles.suggestChipActive]}
-                        onPress={() => {
-                          setSelectedSuggestedTopic(topic);
-                          setMessage(`Quiero practicar: ${topic}`);
-                        }}
-                      >
-                        <Text style={[styles.suggestChipText, selected && styles.suggestChipTextActive]}>{topic}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-                <Pressable
-                  style={[styles.suggestStartBtn, !selectedSuggestedTopic && styles.suggestStartBtnDisabled]}
-                  disabled={!selectedSuggestedTopic || loading || isTranscribing}
-                  onPress={() => {
-                    const topic = selectedSuggestedTopic || suggestedTopics[0];
-                    if (!topic) return;
-                    void onSend(`Quiero practicar: ${topic}`);
-                  }}
-                >
-                  <Text style={styles.suggestStartBtnText}>Usar tema y enviar</Text>
-                </Pressable>
-              </View>
+              <TopicSuggestCard
+                topics={suggestedTopics}
+                selectedTopic={selectedSuggestedTopic}
+                onSelectTopic={(topic) => {
+                  setSelectedSuggestedTopic(topic);
+                  setMessage(`Quiero practicar: ${topic}`);
+                }}
+                onStartWithTopic={(topic) => void onSend(`Quiero practicar: ${topic}`)}
+                disabled={actionDisabled}
+              />
             )}
             {!profileLevelConfigured && (
-              <View style={styles.welcomeCard}>
-                <Text style={styles.welcomeTitle}>¡Hola! Soy tu tutor de inglés</Text>
-                <Text style={styles.welcomeText}>
-                  Voy a ayudarte a practicar de forma personalizada. Para empezar, solo saluda o tocá el botón de abajo.
-                </Text>
-                <Pressable
-                  style={[styles.welcomeStartBtn, actionDisabled && styles.buttonDisabled]}
-                  disabled={actionDisabled}
-                  onPress={() => void onSend("Hello! I want to start practicing English.")}
-                >
-                  <Text style={styles.welcomeStartBtnText}>Saludar al tutor →</Text>
-                </Pressable>
-              </View>
+              <WelcomeCard
+                onStart={() => void onSend("Hello! I want to start practicing English.")}
+                disabled={actionDisabled}
+              />
             )}
           </>
         )}
         {messages.map((item) => (
-          <View
+          <ChatBubble
             key={item.id}
-            style={[styles.bubble, item.role === "assistant" ? styles.assistantBubble : styles.userBubble]}
-          >
-            {item.role === "assistant" ? (
-              <>
-                <Text style={styles.bubbleText}>
-                  {item.text.split(/(\s+)/).map((part, index) => {
-                    const cleaned = cleanLookupToken(part);
-                    if (!cleaned || isLikelySpanish(cleaned)) {
-                      return <Text key={`${item.id}-${index}`}>{part}</Text>;
-                    }
-
-                    return (
-                      <Text
-                        key={`${item.id}-${index}`}
-                        style={styles.lookupInlineWord}
-                        onPress={() => {
-                          void onAssistantWordPress(part);
-                        }}
-                      >
-                        {part}
-                      </Text>
-                    );
-                  })}
-                </Text>
-                <View style={styles.listenMessageRow}>
-                  <Pressable
-                    style={[styles.listenMessageBtn, speakingMessageId === item.id && styles.listenMessageBtnActive]}
-                    onPress={() => onSpeakAssistantMessage(item.id, item.text)}
-                  >
-                    <Text style={styles.listenMessageBtnText}>
-                      {speakingMessageId === item.id ? "Detener audio" : "Escuchar mensaje"}
-                    </Text>
-                  </Pressable>
-                  {(["normal", "slow"] as const).map((r) => (
-                    <Pressable
-                      key={r}
-                      style={[styles.speechRateChip, speechRate === r && styles.speechRateChipActive]}
-                      onPress={() => onChangeSpeechRate(r)}
-                    >
-                      <Text style={[styles.speechRateChipText, speechRate === r && styles.speechRateChipTextActive]}>
-                        {SPEECH_RATE_LABEL[r]}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.bubbleText}>{item.text}</Text>
-                {item.correctionHint && (
-                  <View style={styles.correctionHintWrap}>
-                    <Pressable
-                      style={[styles.correctionHintChip, item.correctionExpanded && styles.correctionHintChipActive]}
-                      onPress={() => onToggleCorrection(item.id)}
-                    >
-                      <Text style={styles.correctionHintChipText}>
-                        {item.correctionExpanded ? "Ocultar corrección" : "Ver corrección"}
-                      </Text>
-                    </Pressable>
-                    {item.correctionExpanded && (
-                      <View style={styles.correctionHintPanel}>
-                        <Text style={styles.correctionHintTitle}>Sugerencia del tutor</Text>
-                        <Text style={styles.correctionHintText}>{item.correctionHint}</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </>
-            )}
-          </View>
+            item={item}
+            speakingMessageId={speakingMessageId}
+            speechRate={speechRate}
+            onSpeak={onSpeakAssistantMessage}
+            onChangeSpeechRate={onChangeSpeechRate}
+            onToggleCorrection={onToggleCorrection}
+            onWordPress={(word) => void onAssistantWordPress(word)}
+          />
         ))}
-        {loading && (
-          <View style={[styles.bubble, styles.assistantBubble, styles.typingBubble]}>
-            <Text style={styles.typingDots}>● ● ●</Text>
-          </View>
-        )}
+        {loading && <TypingIndicator />}
         {lastPronunciationHint && (
           <View style={styles.pronunciationBox}>
             <Text style={styles.pronunciationLabel}>🗣 Pronunciación</Text>
@@ -706,88 +591,19 @@ export function ChatScreen() {
         )}
       </ScrollView>
 
-      {/* Dictionary inline panel */}
       {lookupOpen && (
-        <View style={styles.lookupPanel}>
-          <View style={styles.lookupPanelHeader}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.lookupHistoryScroll}
-              keyboardShouldPersistTaps="handled"
-            >
-              {recentLookups.map((term) => (
-                <Pressable
-                  key={`rh-${term}`}
-                  style={styles.lookupHistoryChip}
-                  onPress={() => {
-                    setLookupQuery(term);
-                    setLookupResult(null);
-                    setLookupError(null);
-                    void (async () => {
-                      setLookupLoading(true);
-                      try {
-                        const result = await lookupTutorTerm(term, progress?.profile.level);
-                        setLookupResult(result);
-                        await recordLookupTerm(term);
-                      } catch (e) {
-                        setLookupError(e instanceof Error ? e.message : "Error al consultar.");
-                      } finally {
-                        setLookupLoading(false);
-                      }
-                    })();
-                  }}
-                >
-                  <Text style={styles.lookupHistoryChipText}>{term}</Text>
-                </Pressable>
-              ))}
-              {recentLookups.length > 0 && (
-                <Pressable
-                  style={styles.lookupClearChip}
-                  onPress={() => { void clearLookupHistory(); setLookupResult(null); setLookupError(null); }}
-                >
-                  <Text style={styles.lookupClearChipText}>Limpiar</Text>
-                </Pressable>
-              )}
-            </ScrollView>
-            <Pressable
-              style={styles.lookupCloseBtn}
-              onPress={() => { setLookupOpen(false); setLookupError(null); }}
-            >
-              <Text style={styles.lookupCloseBtnText}>✕</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.lookupInputRow}>
-            <TextInput
-              value={lookupQuery}
-              onChangeText={setLookupQuery}
-              placeholder="Palabra o frase..."
-              placeholderTextColor={theme.colors.muted}
-              style={styles.lookupInput}
-              returnKeyType="search"
-              onSubmitEditing={() => { if (lookupQuery.trim()) void onLookupPress(); }}
-            />
-            <Pressable
-              style={[styles.lookupButton, (!lookupQuery.trim() || lookupLoading) && styles.buttonDisabled]}
-              disabled={!lookupQuery.trim() || lookupLoading}
-              onPress={() => { void onLookupPress(); }}
-            >
-              <Text style={styles.lookupButtonText}>{lookupLoading ? "⏳" : "Buscar"}</Text>
-            </Pressable>
-          </View>
-
-          {lookupError && <Text style={styles.lookupErrorText}>{lookupError}</Text>}
-          {lookupResult && (
-            <View style={styles.lookupResult}>
-              <View style={styles.lookupResultRow}>
-                <Text style={styles.lookupWord}>{lookupResult.term}</Text>
-                <Text style={styles.lookupTranslation}>{lookupResult.translation}</Text>
-              </View>
-              <Text style={styles.lookupExample} numberOfLines={2}>Ej: {lookupResult.example}</Text>
-            </View>
-          )}
-        </View>
+        <LookupPanel
+          recentLookups={recentLookups}
+          onClearHistory={() => { void clearLookupHistory(); setLookupResult(null); setLookupError(null); }}
+          onClose={() => { setLookupOpen(false); setLookupError(null); }}
+          lookupQuery={lookupQuery}
+          onQueryChange={setLookupQuery}
+          onSearch={() => { if (lookupQuery.trim()) void onLookupPress(); }}
+          lookupLoading={lookupLoading}
+          lookupError={lookupError}
+          lookupResult={lookupResult}
+          onHistoryItemPress={(term) => void onHistoryItemPress(term)}
+        />
       )}
 
       {/* Footer fijo */}
@@ -816,7 +632,6 @@ export function ChatScreen() {
           </View>
         )}
 
-        {!hasTypedMessage && (
         <View style={styles.transcriptionLangRow}>
           <Text style={styles.transcriptionLangLabel}>Idioma:</Text>
           <View style={styles.transcriptionLangOptions}>
@@ -843,7 +658,6 @@ export function ChatScreen() {
             </Pressable>
           </View>
         </View>
-        )}
         <View style={styles.inputRow}>
           <TextInput
             value={message}
@@ -852,7 +666,7 @@ export function ChatScreen() {
               scrollToLatest(false);
               setTimeout(() => scrollToLatest(true), 80);
             }}
-            placeholder=""
+            placeholder="Escribí tu mensaje..."
             placeholderTextColor={theme.colors.muted}
             style={styles.input}
             multiline
