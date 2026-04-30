@@ -21,6 +21,12 @@ function computeCurrentStreak(history: string[]): number {
   const cursor = new Date();
   cursor.setHours(0, 0, 0, 0);
 
+  // If today hasn't been practiced yet, start from yesterday so the streak
+  // doesn't reset at midnight before the user has had a chance to practice.
+  if (!keys.has(dateToLocalKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
   while (true) {
     const key = dateToLocalKey(cursor);
     if (!keys.has(key)) break;
