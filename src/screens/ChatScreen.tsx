@@ -811,7 +811,7 @@ export function ChatScreen() {
         {lastTranslationOriginal !== null && (
           <View style={[styles.clarityChip, { backgroundColor: "#eef6ff", borderColor: theme.colors.accent }]}>
             <Text style={[styles.clarityChipText, { color: theme.colors.accent }]}>
-              🇦🇷 Dijiste: "{lastTranslationOriginal}"
+              Dijiste: "{lastTranslationOriginal}"
             </Text>
           </View>
         )}
@@ -824,21 +824,21 @@ export function ChatScreen() {
               onPress={() => { setTranslateMode(false); setTranscriptionLanguage("en"); setLastTranslationOriginal(null); }}
               disabled={isTranscribing || loading}
             >
-              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipTextActive]}>🇬🇧 EN</Text>
+              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipTextActive]}>EN</Text>
             </Pressable>
             <Pressable
               style={[styles.transcriptionLangChip, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipActive]}
               onPress={() => { setTranslateMode(false); setTranscriptionLanguage("es"); setLastTranslationOriginal(null); setVoiceClarity(null); }}
               disabled={isTranscribing || loading}
             >
-              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipTextActive]}>🇦🇷 ES</Text>
+              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipTextActive]}>ES</Text>
             </Pressable>
             <Pressable
               style={[styles.transcriptionLangChip, translateMode && styles.transcriptionLangChipActive]}
               onPress={() => { setTranslateMode(true); setVoiceClarity(null); }}
               disabled={isTranscribing || loading}
             >
-              <Text style={[styles.transcriptionLangChipText, translateMode && styles.transcriptionLangChipTextActive]}>ES → EN 🌐</Text>
+              <Text style={[styles.transcriptionLangChipText, translateMode && styles.transcriptionLangChipTextActive]}>ES → EN</Text>
             </Pressable>
           </View>
         </View>
