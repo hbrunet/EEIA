@@ -550,12 +550,12 @@ app.post("/tutor/transcribe", upload.single("audio"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "audio file required" });
 
   try {
-    const requestedLanguage = String(req.body?.language || "").trim().toLowerCase();
-    const language = requestedLanguage === "en" || requestedLanguage === "es" ? requestedLanguage : undefined;
+    // This endpoint is for English practice — always hint English so Whisper
+    // doesn't mis-detect and output Spanish for short/accented English clips.
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(req.file.path),
       model: "whisper-large-v3",
-      ...(language ? { language } : {}),
+      language: "en",
       response_format: "verbose_json",
     });
     const segments = Array.isArray(transcription.segments) ? transcription.segments : [];
