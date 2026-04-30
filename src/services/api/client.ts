@@ -82,8 +82,6 @@ export type TutorLookupResponse = {
   source?: "groq" | "fallback";
 };
 
-export type TranscriptionLanguage = "en" | "es" | "auto";
-
 export type TranscriptionResult = {
   text: string;
   avgLogprob: number | null;
@@ -94,16 +92,13 @@ export type TranslationResult = {
   translated: string;
 };
 
-export async function transcribeAudio(audioUri: string, language: TranscriptionLanguage = "en"): Promise<TranscriptionResult> {
+export async function transcribeAudio(audioUri: string): Promise<TranscriptionResult> {
   const formData = new FormData();
   formData.append("audio", {
     uri: audioUri,
     type: "audio/m4a",
     name: "recording.m4a",
   } as any);
-  if (language !== "auto") {
-    formData.append("language", language);
-  }
 
   let response: Response;
 

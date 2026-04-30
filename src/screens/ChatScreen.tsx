@@ -4,7 +4,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
+import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
@@ -22,12 +22,6 @@ const CONTEXT_WINDOW = 8;
 const SESSION_CHECKPOINT_TURNS = 3;
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
 const CHAT_DRAFT_KEY = "eeia.chat.draft.v1";
-const TRANSCRIPTION_LANGUAGE_META: Record<TranscriptionLanguage, string> = {
-  en: "Inglés",
-  es: "Español",
-  auto: "Auto",
-};
-
 type SpeechRate = "normal" | "slow";
 const SPEECH_RATE_VALUE: Record<SpeechRate, number> = { normal: 0.95, slow: 0.65 };
 const SPEECH_RATE_LABEL: Record<SpeechRate, string> = { normal: "Normal", slow: "Lento" };
@@ -100,7 +94,6 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
 
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("auto");
   const [translateMode, setTranslateMode] = useState(false); // ES→EN
   const [lastTranslationOriginal, setLastTranslationOriginal] = useState<string | null>(null);
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
@@ -436,6 +429,8 @@ export function ChatScreen() {
       setMessage("");
       setSelectedSuggestedTopic(null);
     }
+    // Reset per-message state after send
+    setLastTranslationOriginal(null);
   }
 
   async function onMicPress() {
@@ -452,10 +447,10 @@ export function ChatScreen() {
             setMessage(result.translated);
             setLastTranslationOriginal(result.original || null);
           } else {
-            const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
+            const result: TranscriptionResult = await transcribeAudio(uri);
             setMessage(result.text);
             setLastTranslationOriginal(null);
-            if (transcriptionLanguage === "en" || (transcriptionLanguage === "auto" && result.avgLogprob !== null)) {
+            if (result.avgLogprob !== null) {
               setVoiceClarity(result.avgLogprob);
             }
           }
@@ -818,28 +813,7 @@ export function ChatScreen() {
             </Text>
           </View>
         )}
-        {(Boolean(recording) || isTranscribing) && (
-          <View style={styles.transcriptionLangRow}>
-            <Text style={styles.transcriptionLangLabel}>Idioma de voz:</Text>
-            <View style={styles.transcriptionLangOptions}>
-              {!translateMode && (["auto", "en", "es"] as const).map((language) => {
-                const selected = transcriptionLanguage === language;
-                return (
-                  <Pressable
-                    key={`transcript-lang-${language}`}
-                    style={[styles.transcriptionLangChip, selected && styles.transcriptionLangChipActive]}
-                    onPress={() => { setTranscriptionLanguage(language); setVoiceClarity(null); }}
-                    disabled={isTranscribing || loading}
-                  >
-                    <Text style={[styles.transcriptionLangChipText, selected && styles.transcriptionLangChipTextActive]}>
-                      {TRANSCRIPTION_LANGUAGE_META[language]}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        )}
+
         <View style={styles.transcriptionLangRow}>
           <Text style={styles.transcriptionLangLabel}>Modo:</Text>
           <View style={styles.transcriptionLangOptions}>
