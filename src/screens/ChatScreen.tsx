@@ -4,7 +4,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
+import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { env } from "../config/env";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
@@ -94,6 +94,7 @@ export function ChatScreen() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
 
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
   const [translateMode, setTranslateMode] = useState(false); // ES→EN
   const [lastTranslationOriginal, setLastTranslationOriginal] = useState<string | null>(null);
   const [voiceClarity, setVoiceClarity] = useState<number | null>(null);
@@ -431,6 +432,7 @@ export function ChatScreen() {
     }
     // Reset per-message state after send
     setLastTranslationOriginal(null);
+    setTranscriptionLanguage("en");
   }
 
   async function onMicPress() {
@@ -447,7 +449,7 @@ export function ChatScreen() {
             setMessage(result.translated);
             setLastTranslationOriginal(result.original || null);
           } else {
-            const result: TranscriptionResult = await transcribeAudio(uri);
+            const result: TranscriptionResult = await transcribeAudio(uri, transcriptionLanguage);
             setMessage(result.text);
             setLastTranslationOriginal(null);
             if (result.avgLogprob !== null) {
@@ -815,14 +817,21 @@ export function ChatScreen() {
         )}
 
         <View style={styles.transcriptionLangRow}>
-          <Text style={styles.transcriptionLangLabel}>Modo:</Text>
+          <Text style={styles.transcriptionLangLabel}>Idioma:</Text>
           <View style={styles.transcriptionLangOptions}>
             <Pressable
-              style={[styles.transcriptionLangChip, !translateMode && styles.transcriptionLangChipActive]}
-              onPress={() => { setTranslateMode(false); setLastTranslationOriginal(null); }}
+              style={[styles.transcriptionLangChip, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipActive]}
+              onPress={() => { setTranslateMode(false); setTranscriptionLanguage("en"); setLastTranslationOriginal(null); }}
               disabled={isTranscribing || loading}
             >
-              <Text style={[styles.transcriptionLangChipText, !translateMode && styles.transcriptionLangChipTextActive]}>Transcribir</Text>
+              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipTextActive]}>🇬🇧 EN</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.transcriptionLangChip, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipActive]}
+              onPress={() => { setTranslateMode(false); setTranscriptionLanguage("es"); setLastTranslationOriginal(null); setVoiceClarity(null); }}
+              disabled={isTranscribing || loading}
+            >
+              <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipTextActive]}>🇦🇷 ES</Text>
             </Pressable>
             <Pressable
               style={[styles.transcriptionLangChip, translateMode && styles.transcriptionLangChipActive]}
