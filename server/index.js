@@ -890,6 +890,134 @@ app.post("/tutor/shadowing-phrases", async (req, res) => {
   }
 });
 
+// ─── Topic suggestions ───────────────────────────────────────────────────────
+
+const TOPIC_SUGGESTION_FALLBACK = [
+  "Reunión de trabajo y seguimiento de tareas",
+  "Pedir comida en un restaurante",
+  "Pronunciación en presentaciones cortas",
+];
+
+app.post("/tutor/topic-suggestions", async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    // Learner context
+    const level = String(body.level || "A2").trim().toUpperCase();
+    const name = String(body.name || "").trim();
+    const nextClassGoal = String(body.nextClassGoal || "").trim();
+    const grammarAccuracy = Number(body.grammarAccuracy ?? 0);
+    const fluencyScore = Number(body.fluencyScore ?? 0);
+    const pronunciationScore = Number(body.pronunciationScore ?? 0);
+    const weaknesses = Array.isArray(body.weaknesses)
+      ? body.weaknesses.map((w) => String(w)).filter(Boolean).slice(0, 5)
+      : [];
+    const recentTopics = Array.isArray(body.recentTopics)
+      ? body.recentTopics.map((t) => String(t)).filter(Boolean).slice(0, 8)
+      : [];
+    const listeningByAccent = body.listeningByAccent && typeof body.listeningByAccent === "object"
+      ? body.listeningByAccent
+      : {};
+
+    if (!groq) {
+      return res.json({ topics: TOPIC_SUGGESTION_FALLBACK, source: "fallback" });
+    }
+
+    // Build weakest accent line (only include accents that make sense for real-world use)
+    const ACCENT_LABELS = {
+      american: "americano (EE.UU.)",
+      british: "británico (Reino Unido)",
+      australian: "australiano",
+      canadian: "canadiense",
+      irish: "irlandés",
+      scottish: "escocés",
+      indian: "indio (muy frecuente en tecnología)",
+      southAfrican: "sudafricano",
+    };
+    const accentEntries = Object.entries(listeningByAccent)
+      .filter(([key]) => ACCENT_LABELS[key])
+      .sort((a, b) => a[1] - b[1]);
+    const weakestAccentLine = accentEntries.length > 0
+      ? `Acento con menor comprensión: ${ACCENT_LABELS[accentEntries[0][0]] || accentEntries[0][0]} (${accentEntries[0][1]}%)`
+      : "";
+
+    const weakestArea =
+      grammarAccuracy <= fluencyScore * 10 && grammarAccuracy <= pronunciationScore * 10
+        ? "grammar"
+        : fluencyScore * 10 <= pronunciationScore * 10
+        ? "fluency"
+        : "pronunciation";
+
+    const systemPrompt =
+      "You are an intelligent English coach generating personalized conversation topic suggestions " +
+      "for Spanish-speaking learners. Your goal is to help the student improve in their weakest areas " +
+      "while keeping them motivated with varied, practical, and engaging topics. " +
+      "Topics must be conversational and relevant to real-life situations " +
+      "(work, travel, technology, daily life, culture, etc.). " +
+      "Never suggest offensive, political, or culturally sensitive topics. " +
+      "Respond ONLY as JSON with key: topics (array of exactly 3 strings in Spanish, each 5 to 12 words long).";
+
+    const userPrompt =
+      `Student profile:\n` +
+      `- Name: ${name || "not specified"}\n` +
+      `- CEFR level: ${level}\n` +
+      `- Grammar accuracy: ${grammarAccuracy}%\n` +
+      `- Fluency: ${Math.round(fluencyScore * 10)}%\n` +
+      `- Pronunciation: ${Math.round(pronunciationScore * 10)}%\n` +
+      `- Current weakest skill: ${weakestArea}\n` +
+      (weaknesses.length > 0 ? `- Specific weaknesses: ${weaknesses.join(", ")}\n` : "") +
+      (weakestAccentLine ? `- ${weakestAccentLine}\n` : "") +
+      (nextClassGoal ? `- Next class goal: "${nextClassGoal}"\n` : "") +
+      `\n${recentTopics.length > 0 ? `Recent topics (do not repeat): ${recentTopics.map((t) => `"${t}"`).join(", ")}` : "No recent topics."}\n\n` +
+      `Generate exactly 3 conversation topics for the next session. Each topic must:\n` +
+      `1. Cover a different theme (variety to target different skills across the 3 suggestions)\n` +
+      `2. Naturally address one of the student's weak areas\n` +
+      `3. Have practical relevance for real life or travel\n` +
+      `4. If there is a weak accent, at least one topic should incorporate listening in that cultural context\n` +
+      `5. If there is a next class goal, at least one topic should relate to it\n` +
+      `Write all topic strings in Spanish.`;
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: 0.8,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+
+      const raw = completion.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return res.json({ topics: TOPIC_SUGGESTION_FALLBACK, source: "fallback" });
+      }
+
+      const topics = Array.isArray(parsed.topics)
+        ? parsed.topics
+            .map((t) => String(t || "").trim())
+            .filter((t) => t.length > 0)
+            .slice(0, 3)
+        : [];
+
+      if (topics.length < 1) {
+        return res.json({ topics: TOPIC_SUGGESTION_FALLBACK, source: "fallback" });
+      }
+
+      return res.json({ topics, source: "groq" });
+    } catch (groqError) {
+      console.error("Topic suggestions Groq call failed, using fallback", groqError);
+      return res.json({ topics: TOPIC_SUGGESTION_FALLBACK, source: "fallback" });
+    }
+  } catch (error) {
+    console.error("Topic suggestions endpoint error", error);
+    return res.status(500).json({ error: "topic_suggestions_failed" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Tutor API running on http://localhost:${port}`);
   console.log(`Provider: Groq | Model: ${model} | API key loaded: ${Boolean(apiKey)}`);

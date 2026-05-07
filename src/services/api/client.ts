@@ -206,3 +206,29 @@ export async function lookupTutorTerm(
     body: JSON.stringify({ term, learnerLevel }),
   });
 }
+
+export type TopicSuggestionsPayload = {
+  level?: string;
+  name?: string;
+  nextClassGoal?: string;
+  grammarAccuracy?: number;
+  fluencyScore?: number;
+  pronunciationScore?: number;
+  weaknesses?: string[];
+  recentTopics?: string[];
+  listeningByAccent?: Record<string, number>;
+};
+
+export type TopicSuggestionsResponse = {
+  topics: string[];
+  source: "groq" | "fallback";
+};
+
+export async function fetchTopicSuggestions(
+  payload: TopicSuggestionsPayload,
+): Promise<TopicSuggestionsResponse> {
+  return apiRequest<TopicSuggestionsResponse>("/tutor/topic-suggestions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

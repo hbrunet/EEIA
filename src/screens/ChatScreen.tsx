@@ -4,7 +4,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
+import { fetchTopicSuggestions, lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
 import { theme } from "../ui/theme";
 import { styles } from "./ChatScreen.styles";
@@ -92,10 +92,38 @@ export function ChatScreen() {
   });
   const profileLevelConfigured = Boolean(progress?.profile.level);
   const beginnerMode = isBeginnerLevel(progress?.profile.level);
-  const suggestedTopics = useMemo(
-    () => (progress ? buildSmartTopicSuggestions(progress) : []),
-    [progress],
-  );
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [topicsLoading, setTopicsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!progress || !profileLevelConfigured) return;
+    let cancelled = false;
+    setTopicsLoading(true);
+    const localFallback = buildSmartTopicSuggestions(progress);
+    const listeningByAccent = (progress.metrics as any).listeningByAccent ?? {};
+    fetchTopicSuggestions({
+      level: progress.profile.level,
+      name: progress.profile.name,
+      nextClassGoal: progress.nextClassGoal,
+      grammarAccuracy: progress.metrics.grammarAccuracy,
+      fluencyScore: progress.metrics.fluencyScore,
+      pronunciationScore: progress.metrics.pronunciationScore,
+      weaknesses: progress.weaknesses?.map((w) => w.detail) ?? [],
+      recentTopics: (progress.chatSessionHistory || []).slice(0, 8).map((s) => s.topic).filter(Boolean),
+      listeningByAccent,
+    })
+      .then((res) => {
+        if (!cancelled) setSuggestedTopics(res.topics.length > 0 ? res.topics : localFallback);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestedTopics(localFallback);
+      })
+      .finally(() => {
+        if (!cancelled) setTopicsLoading(false);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLevelConfigured]);
   const recentLookups = progress?.lookupHistory || [];
   const recentLookupWords = useMemo(
     () => recentLookups.filter((item) => !item.trim().includes(" ")),
@@ -181,7 +209,22 @@ export function ChatScreen() {
             setMessages(draft.messages);
             setPhase(draft.phase ?? "setup");
             setSelectedSuggestedTopic(draft.selectedSuggestedTopic ?? null);
-            if (draft.session) sessionRef.current = draft.session;
+            if (draft.session) {
+              const sameDay = draft.session.startedAt
+                ? new Date(draft.session.startedAt).toDateString() === new Date().toDateString()
+                : false;
+              sessionRef.current = sameDay
+                ? draft.session
+                : {
+                    ...sessionRef.current,
+                    topic: draft.session.topic,
+                    source: draft.session.source,
+                    turns: 0,
+                    correctionCount: 0,
+                    pronunciationHintCount: 0,
+                    startedAt: new Date().toISOString(),
+                  };
+            }
             setTimeout(() => scrollToLatest(false), 150);
           }
         } catch {
@@ -520,7 +563,7 @@ export function ChatScreen() {
         <View style={styles.headerRow}>
           <View style={styles.titleRow}>
             <Text style={styles.title}>Tutor Chat</Text>
-            <Text style={[styles.statusDot, { color: !isInactive && lastSource && lastSource !== "fallback" ? theme.colors.accent : theme.colors.accentAlt }]}>●</Text>
+            <Text style={[styles.statusDot, { color: lastSource && lastSource !== "fallback" ? theme.colors.accent : theme.colors.accentAlt }]}>●</Text>
           </View>
           {messages.length > 0 && (
             <Pressable style={styles.newSessionBtn} onPress={onClearChat}>
@@ -550,9 +593,10 @@ export function ChatScreen() {
       >
         {messages.length === 0 && (
           <>
-            {phase === "setup" && profileLevelConfigured && suggestedTopics.length > 0 && (
+            {phase === "setup" && profileLevelConfigured && (topicsLoading || suggestedTopics.length > 0) && (
               <TopicSuggestCard
                 topics={suggestedTopics}
+                loading={topicsLoading}
                 selectedTopic={selectedSuggestedTopic}
                 onSelectTopic={(topic) => {
                   setSelectedSuggestedTopic(topic);
@@ -632,7 +676,7 @@ export function ChatScreen() {
           </View>
         )}
 
-        <View style={styles.transcriptionLangRow}>
+        <View style={[styles.transcriptionLangRow, actionDisabled && styles.buttonDisabled]}>
           <Text style={styles.transcriptionLangLabel}>Idioma:</Text>
           <View style={styles.transcriptionLangOptions}>
             <Pressable
@@ -668,8 +712,9 @@ export function ChatScreen() {
             }}
             placeholder="Escribí tu mensaje..."
             placeholderTextColor={theme.colors.muted}
-            style={styles.input}
+            style={[styles.input, actionDisabled && styles.buttonDisabled]}
             multiline
+            editable={!actionDisabled}
           />
           <Pressable
             style={[

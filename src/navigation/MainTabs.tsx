@@ -66,12 +66,20 @@ function computeCurrentStreak(history: string[]): number {
 
 export function MainTabs() {
   const { progress } = useAppState();
-  const previousHistoryCountRef = useRef(progress?.dailyGoalHistory?.length || 0);
+  // -1 means not yet initialized; prevents badge alert on initial load
+  const previousHistoryCountRef = useRef<number>(-1);
 
   useEffect(() => {
     if (!progress) return;
 
     const currentCount = progress.dailyGoalHistory?.length || 0;
+
+    if (previousHistoryCountRef.current === -1) {
+      // First load: record baseline without triggering any alert
+      previousHistoryCountRef.current = currentCount;
+      return;
+    }
+
     const previousCount = previousHistoryCountRef.current;
     previousHistoryCountRef.current = currentCount;
 
