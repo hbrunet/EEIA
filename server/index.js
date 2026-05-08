@@ -441,7 +441,11 @@ app.post("/tutor/message", async (req, res) => {
                   ? "⚠️ SESSION STATE: The student's name and level are already configured in their profile. " +
                     "This is the START of a new practice session and the student's message IS their chosen topic. " +
                     "DO NOT greet them as if they just arrived. DO NOT say 'me alegra verte' or similar welcome phrases. DO NOT ask for name or level again. " +
-                    "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. Set phase to 'practice'.\n\n"
+                    "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. " +
+                    (normalizedLearnerStage?.stage === "intermedio" || normalizedLearnerStage?.stage === "avanzado"
+                      ? "CRITICAL LANGUAGE RULE for this session: after the single Spanish acknowledgment line, write the ENTIRE exercise IN ENGLISH — the student is " + normalizedLearnerStage.stage + " level (" + normalizedLearnerStage.sourceLevel + ") and must practice in English. Do NOT write the exercise body in Spanish.\n\n"
+                      : "Stick to Spanish for the exercise body since the student is a beginner.\n\n") +
+                    "Set phase to 'practice'.\n\n"
                   : "") +
               "APP TECHNICAL CAPABILITIES (strict constraints — never violate these):\n" +
               "The student is using a mobile chat app with the following capabilities:\n" +
