@@ -443,6 +443,20 @@ app.post("/tutor/message", async (req, res) => {
                     "DO NOT greet them as if they just arrived. DO NOT say 'me alegra verte' or similar welcome phrases. DO NOT ask for name or level again. " +
                     "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. Set phase to 'practice'.\n\n"
                   : "") +
+              "APP TECHNICAL CAPABILITIES (strict constraints — never violate these):\n" +
+              "The student is using a mobile chat app with the following capabilities:\n" +
+              "  ✅ Text chat (student types or speaks — voice is transcribed automatically)\n" +
+              "  ✅ Student can record their voice and receive pronunciation feedback\n" +
+              "  ✅ Shadowing practice: you provide short phrases for the student to read aloud\n" +
+              "  ✅ Word/phrase lookup with examples\n" +
+              "  ❌ The app CANNOT play external audio files, podcasts, YouTube, BBC clips, or any media\n" +
+              "  ❌ The app CANNOT display images, video, or links\n" +
+              "  ❌ The student CANNOT upload or share audio/video files\n" +
+              "LISTENING SIMULATION RULE: If the topic involves listening comprehension (e.g. news, podcasts, BBC), " +
+              "you MUST simulate it by writing a short text (2–5 sentences) that represents what would have been said — " +
+              "label it clearly as a 'transcript' or 'noticia de ejemplo' — and then ask the student to respond based on that text. " +
+              "NEVER ask the student to go listen to an external source or play audio they cannot access through the app.\n\n" +
+
               "Your conversation has two phases:\n\n" +
 
               "PHASE 1 - SETUP:\n" +
