@@ -6,6 +6,7 @@ import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
 import { fetchTopicSuggestions, lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
+import { TopicSuggestion } from "../types/progress";
 import { theme } from "../ui/theme";
 import { styles } from "./ChatScreen.styles";
 import { ChatMessage, SpeechRate, SPEECH_RATE_VALUE } from "./chat/types";
@@ -92,7 +93,7 @@ export function ChatScreen() {
   });
   const profileLevelConfigured = Boolean(progress?.profile.level);
   const beginnerMode = isBeginnerLevel(progress?.profile.level);
-  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [suggestedTopics, setSuggestedTopics] = useState<TopicSuggestion[]>([]);
   const [topicsLoading, setTopicsLoading] = useState(false);
 
   useEffect(() => {
@@ -135,6 +136,7 @@ export function ChatScreen() {
   );
   const hasTypedMessage = message.trim().length > 0;
   const actionDisabled = loading || isTranscribing;
+  const inputControlsDisabled = actionDisabled || recording !== null;
 
   function getSpeechOptions(rate = 0.95): Speech.SpeechOptions {
     const locale = "en-US";
@@ -676,27 +678,27 @@ export function ChatScreen() {
           </View>
         )}
 
-        <View style={[styles.transcriptionLangRow, actionDisabled && styles.buttonDisabled]}>
+        <View style={[styles.transcriptionLangRow, inputControlsDisabled && styles.buttonDisabled]}>
           <Text style={styles.transcriptionLangLabel}>Idioma:</Text>
           <View style={styles.transcriptionLangOptions}>
             <Pressable
               style={[styles.transcriptionLangChip, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipActive]}
               onPress={() => { setTranslateMode(false); setTranscriptionLanguage("en"); setLastTranslationOriginal(null); }}
-              disabled={isTranscribing || loading}
+              disabled={inputControlsDisabled}
             >
               <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "en" && !translateMode && styles.transcriptionLangChipTextActive]}>EN</Text>
             </Pressable>
             <Pressable
               style={[styles.transcriptionLangChip, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipActive]}
               onPress={() => { setTranslateMode(false); setTranscriptionLanguage("es"); setLastTranslationOriginal(null); setVoiceClarity(null); }}
-              disabled={isTranscribing || loading}
+              disabled={inputControlsDisabled}
             >
               <Text style={[styles.transcriptionLangChipText, transcriptionLanguage === "es" && !translateMode && styles.transcriptionLangChipTextActive]}>ES</Text>
             </Pressable>
             <Pressable
               style={[styles.transcriptionLangChip, translateMode && styles.transcriptionLangChipActive]}
               onPress={() => { setTranslateMode(true); setVoiceClarity(null); }}
-              disabled={isTranscribing || loading}
+              disabled={inputControlsDisabled}
             >
               <Text style={[styles.transcriptionLangChipText, translateMode && styles.transcriptionLangChipTextActive]}>ES → EN</Text>
             </Pressable>

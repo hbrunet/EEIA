@@ -1,4 +1,5 @@
 import { env } from "../../config/env";
+import { TopicSuggestion } from "../../types/progress";
 
 export type TutorChatMessage = {
   role: "user" | "assistant";
@@ -220,7 +221,7 @@ export type TopicSuggestionsPayload = {
 };
 
 export type TopicSuggestionsResponse = {
-  topics: string[];
+  topics: TopicSuggestion[];
   source: "groq" | "fallback";
 };
 

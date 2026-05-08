@@ -1,8 +1,9 @@
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { TopicSuggestion } from "../../types/progress";
 import { styles } from "../ChatScreen.styles";
 
 type Props = {
-  topics: string[];
+  topics: TopicSuggestion[];
   loading?: boolean;
   selectedTopic: string | null;
   onSelectTopic: (topic: string) => void;
@@ -15,22 +16,28 @@ export function TopicSuggestCard({ topics, loading, selectedTopic, onSelectTopic
     <View style={styles.suggestCard}>
       <Text style={styles.suggestTitle}>Temas sugeridos para hoy</Text>
       <Text style={styles.suggestHelper}>
-        Elegí uno para arrancar más rápido según tu nivel y progreso.
+        Cada tema trabaja una estructura clave para subir de nivel.
       </Text>
       {loading ? (
         <ActivityIndicator style={{ marginVertical: 18 }} />
       ) : (
         <View style={styles.suggestGrid}>
           {topics.map((topic) => {
-            const selected = selectedTopic === topic;
+            const selected = selectedTopic === topic.text;
             return (
               <Pressable
-                key={topic}
+                key={topic.text}
                 style={[styles.suggestChip, selected && styles.suggestChipActive]}
-                onPress={() => onSelectTopic(topic)}
+                onPress={() => onSelectTopic(topic.text)}
               >
                 <Text style={[styles.suggestChipText, selected && styles.suggestChipTextActive]}>
-                  {topic}
+                  {topic.text}
+                </Text>
+                <Text style={[
+                  styles.suggestChipSkill,
+                  selected && styles.suggestChipSkillActive,
+                ]}>
+                  🎯 {topic.skillFocus}
                 </Text>
               </Pressable>
             );
@@ -41,7 +48,7 @@ export function TopicSuggestCard({ topics, loading, selectedTopic, onSelectTopic
         style={[styles.suggestStartBtn, (!selectedTopic || disabled || loading) && styles.suggestStartBtnDisabled]}
         disabled={!selectedTopic || disabled || loading}
         onPress={() => {
-          const topic = selectedTopic ?? topics[0];
+          const topic = selectedTopic ?? topics[0]?.text;
           if (!topic) return;
           onStartWithTopic(topic);
         }}

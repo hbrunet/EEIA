@@ -1,6 +1,12 @@
 export type SkillArea = "grammar" | "listening" | "fluency" | "pronunciation" | "vocabulary";
 export type EnglishLevel = "A1" | "A2" | "B1" | "B2" | "C1";
 
+/** A pedagogically-oriented topic suggestion with a concrete grammar/skill focus. */
+export type TopicSuggestion = {
+  text: string;
+  skillFocus: string;
+};
+
 export type LessonMetric = {
   grammarAccuracy: number;
   fluencyScore: number;

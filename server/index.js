@@ -893,10 +893,67 @@ app.post("/tutor/shadowing-phrases", async (req, res) => {
 // ─── Topic suggestions ───────────────────────────────────────────────────────
 
 const TOPIC_SUGGESTION_FALLBACK = [
-  "Reunión de trabajo y seguimiento de tareas",
-  "Pedir comida en un restaurante",
-  "Pronunciación en presentaciones cortas",
+  { text: "Reunión de trabajo y seguimiento de tareas", skillFocus: "Present perfect" },
+  { text: "Pedir comida en un restaurante",             skillFocus: "Can / Could" },
+  { text: "Pronunciación en presentaciones cortas",    skillFocus: "Pronunciation" },
 ];
+
+// CEFR progression map: grammar structures needed to reach the next level
+const CEFR_PROGRESSION = {
+  A1: {
+    nextLevel: "A2",
+    keyStructures: [
+      "verb to be (am/is/are)",
+      "present simple (I like, he works)",
+      "basic question formation (Are you…? Do you…?)",
+      "possessives (my, your, his/her)",
+      "basic vocabulary: numbers, colors, family, body parts",
+    ],
+  },
+  A2: {
+    nextLevel: "B1",
+    keyStructures: [
+      "past simple (regular and irregular verbs)",
+      "going to (future plans)",
+      "will (spontaneous future, predictions)",
+      "can / could / would (ability, requests)",
+      "comparatives and superlatives",
+      "common phrasal verbs (go out, look for, wake up)",
+    ],
+  },
+  B1: {
+    nextLevel: "B2",
+    keyStructures: [
+      "present perfect (I have done / I have been)",
+      "1st conditional (If I study, I will pass)",
+      "2nd conditional (If I had more time, I would travel)",
+      "passive voice (The report was sent)",
+      "phrasal verbs in context",
+      "expressing opinions and agreeing/disagreeing",
+    ],
+  },
+  B2: {
+    nextLevel: "C1",
+    keyStructures: [
+      "3rd conditional (If I had known, I would have called)",
+      "mixed conditionals",
+      "reported speech (She said that she had finished)",
+      "advanced vocabulary and collocations",
+      "discourse markers (However, Furthermore, In contrast)",
+      "idiomatic expressions",
+    ],
+  },
+  C1: {
+    nextLevel: "C2",
+    keyStructures: [
+      "nuanced register variation (formal vs informal vs academic)",
+      "complex clause structures and nominalisation",
+      "advanced idiomatic and figurative language",
+      "critical discussion and hedging language",
+      "cohesion and coherence in extended discourse",
+    ],
+  },
+};
 
 app.post("/tutor/topic-suggestions", async (req, res) => {
   try {
@@ -923,25 +980,27 @@ app.post("/tutor/topic-suggestions", async (req, res) => {
       return res.json({ topics: TOPIC_SUGGESTION_FALLBACK, source: "fallback" });
     }
 
+    const progression = CEFR_PROGRESSION[level] || CEFR_PROGRESSION["A2"];
+
     // Build weakest accent line (only include accents that make sense for real-world use)
     const ACCENT_LABELS = {
-      american: "americano (EE.UU.)",
-      british: "británico (Reino Unido)",
-      australian: "australiano",
-      canadian: "canadiense",
-      irish: "irlandés",
-      scottish: "escocés",
-      indian: "indio (muy frecuente en tecnología)",
-      southAfrican: "sudafricano",
+      american:    "American English (USA — most widely used globally)",
+      british:     "British English (UK — essential for European and professional contexts)",
+      australian:  "Australian English (useful for travel and Oceania)",
+      canadian:    "Canadian English (similar to American but distinct in some areas)",
+      irish:       "Irish English (common in tech industry)",
+      scottish:    "Scottish English",
+      indian:      "Indian English (very frequent in technology and outsourcing)",
+      southAfrican: "South African English",
     };
     const accentEntries = Object.entries(listeningByAccent)
       .filter(([key]) => ACCENT_LABELS[key])
       .sort((a, b) => a[1] - b[1]);
     const weakestAccentLine = accentEntries.length > 0
-      ? `Acento con menor comprensión: ${ACCENT_LABELS[accentEntries[0][0]] || accentEntries[0][0]} (${accentEntries[0][1]}%)`
+      ? `Weakest listening accent: ${ACCENT_LABELS[accentEntries[0][0]] || accentEntries[0][0]} (score: ${accentEntries[0][1]}%)`
       : "";
 
-    const weakestArea =
+    const weakestSkill =
       grammarAccuracy <= fluencyScore * 10 && grammarAccuracy <= pronunciationScore * 10
         ? "grammar"
         : fluencyScore * 10 <= pronunciationScore * 10
@@ -949,38 +1008,44 @@ app.post("/tutor/topic-suggestions", async (req, res) => {
         : "pronunciation";
 
     const systemPrompt =
-      "You are an intelligent English coach generating personalized conversation topic suggestions " +
-      "for Spanish-speaking learners. Your goal is to help the student improve in their weakest areas " +
-      "while keeping them motivated with varied, practical, and engaging topics. " +
-      "Topics must be conversational and relevant to real-life situations " +
-      "(work, travel, technology, daily life, culture, etc.). " +
-      "Never suggest offensive, political, or culturally sensitive topics. " +
-      "Respond ONLY as JSON with key: topics (array of exactly 3 strings in Spanish, each 5 to 12 words long).";
+      "You are an expert English teacher designing pedagogically-driven lesson topics for Spanish-speaking learners. " +
+      "Your goal is NOT to suggest random conversation topics — it is to plan practice sessions that systematically " +
+      "build the grammar structures and skills the student needs to reach their next CEFR level. " +
+      "Each topic must embed a specific grammar structure or language skill as its core learning objective, " +
+      "wrapped inside a real-life, motivating situation (travel, work, technology, daily life, culture). " +
+      "The student should feel they are having a fun conversation, but the tutor will be targeting the underlying structure. " +
+      "Never suggest offensive, political, or culturally sensitive content. " +
+      "Respond ONLY as JSON with key: topics — an array of exactly 3 objects, each with:\n" +
+      "  - text: string in Spanish (the conversation situation, 5–12 words)\n" +
+      "  - skillFocus: string in English (the specific grammar/skill being targeted, 2–5 words, e.g. 'Present perfect', '2nd Conditional', 'Passive voice')";
 
     const userPrompt =
       `Student profile:\n` +
       `- Name: ${name || "not specified"}\n` +
-      `- CEFR level: ${level}\n` +
+      `- Current CEFR level: ${level}\n` +
+      `- Target next level: ${progression.nextLevel}\n` +
       `- Grammar accuracy: ${grammarAccuracy}%\n` +
       `- Fluency: ${Math.round(fluencyScore * 10)}%\n` +
       `- Pronunciation: ${Math.round(pronunciationScore * 10)}%\n` +
-      `- Current weakest skill: ${weakestArea}\n` +
+      `- Weakest skill right now: ${weakestSkill}\n` +
       (weaknesses.length > 0 ? `- Specific weaknesses: ${weaknesses.join(", ")}\n` : "") +
       (weakestAccentLine ? `- ${weakestAccentLine}\n` : "") +
       (nextClassGoal ? `- Next class goal: "${nextClassGoal}"\n` : "") +
-      `\n${recentTopics.length > 0 ? `Recent topics (do not repeat): ${recentTopics.map((t) => `"${t}"`).join(", ")}` : "No recent topics."}\n\n` +
-      `Generate exactly 3 conversation topics for the next session. Each topic must:\n` +
-      `1. Cover a different theme (variety to target different skills across the 3 suggestions)\n` +
-      `2. Naturally address one of the student's weak areas\n` +
-      `3. Have practical relevance for real life or travel\n` +
-      `4. If there is a weak accent, at least one topic should incorporate listening in that cultural context\n` +
-      `5. If there is a next class goal, at least one topic should relate to it\n` +
-      `Write all topic strings in Spanish.`;
+      `\nKey grammar structures needed to advance from ${level} to ${progression.nextLevel}:\n` +
+      progression.keyStructures.map((s) => `  • ${s}`).join("\n") +
+      `\n\n${recentTopics.length > 0 ? `Recent session topics (do not repeat these):\n${recentTopics.map((t) => `  - "${t}"`).join("\n")}` : "No recent sessions yet."}\n\n` +
+      `Generate exactly 3 session topics. Rules:\n` +
+      `1. Each topic must target a DIFFERENT grammar structure from the progression list above\n` +
+      `2. Prioritize structures related to the student's weakest skill (${weakestSkill})\n` +
+      `3. Wrap each structure in a natural, real-life conversation situation\n` +
+      `4. If there is a weak accent, one topic should involve listening comprehension in that accent's cultural context\n` +
+      `5. If there is a next class goal, one topic should address it\n` +
+      `6. Write the "text" field in Spanish, "skillFocus" in English`;
 
     try {
       const completion = await groq.chat.completions.create({
         model,
-        temperature: 0.8,
+        temperature: 0.75,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
@@ -998,8 +1063,9 @@ app.post("/tutor/topic-suggestions", async (req, res) => {
 
       const topics = Array.isArray(parsed.topics)
         ? parsed.topics
-            .map((t) => String(t || "").trim())
-            .filter((t) => t.length > 0)
+            .filter((t) => t && typeof t.text === "string" && typeof t.skillFocus === "string")
+            .map((t) => ({ text: String(t.text).trim(), skillFocus: String(t.skillFocus).trim() }))
+            .filter((t) => t.text.length > 0 && t.skillFocus.length > 0)
             .slice(0, 3)
         : [];
 

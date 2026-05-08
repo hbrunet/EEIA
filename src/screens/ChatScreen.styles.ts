@@ -119,6 +119,15 @@ export const styles = StyleSheet.create({
   suggestChipTextActive: {
     color: theme.colors.accent,
   },
+  suggestChipSkill: {
+    color: theme.colors.muted,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  suggestChipSkillActive: {
+    color: theme.colors.accent,
+    opacity: 0.85,
+  },
   suggestStartBtn: {
     marginTop: 2,
     borderRadius: 10,
