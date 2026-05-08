@@ -1,7 +1,28 @@
-import { Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import { styles } from "../ChatScreen.styles";
 import { ChatMessage, SpeechRate, SPEECH_RATE_LABEL } from "./types";
 import { cleanLookupToken, isLikelySpanish } from "./utils";
+
+const URL_REGEX = /https?:\/\/[^\s)>\]"']+/;
+
+/** Split text into alternating non-URL / URL segments */
+function splitWithUrls(text: string): Array<{ type: "text" | "url"; value: string }> {
+  const parts: Array<{ type: "text" | "url"; value: string }> = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    const match = remaining.match(URL_REGEX);
+    if (!match || match.index === undefined) {
+      parts.push({ type: "text", value: remaining });
+      break;
+    }
+    if (match.index > 0) {
+      parts.push({ type: "text", value: remaining.slice(0, match.index) });
+    }
+    parts.push({ type: "url", value: match[0] });
+    remaining = remaining.slice(match.index + match[0].length);
+  }
+  return parts;
+}
 
 type Props = {
   item: ChatMessage;
@@ -19,20 +40,33 @@ export function ChatBubble({ item, speakingMessageId, speechRate, onSpeak, onCha
       {item.role === "assistant" ? (
         <>
           <Text style={styles.bubbleText}>
-            {item.text.split(/(\s+)/).map((part, index) => {
-              const cleaned = cleanLookupToken(part);
-              if (!cleaned || isLikelySpanish(cleaned)) {
-                return <Text key={`${item.id}-${index}`}>{part}</Text>;
+            {splitWithUrls(item.text).map((segment, si) => {
+              if (segment.type === "url") {
+                return (
+                  <Text
+                    key={`${item.id}-url-${si}`}
+                    style={styles.linkText}
+                    onPress={() => Linking.openURL(segment.value)}
+                  >
+                    {segment.value}
+                  </Text>
+                );
               }
-              return (
-                <Text
-                  key={`${item.id}-${index}`}
-                  style={styles.lookupInlineWord}
-                  onPress={() => onWordPress(part)}
-                >
-                  {part}
-                </Text>
-              );
+              return segment.value.split(/(\s+)/).map((part, wi) => {
+                const cleaned = cleanLookupToken(part);
+                if (!cleaned || isLikelySpanish(cleaned)) {
+                  return <Text key={`${item.id}-${si}-${wi}`}>{part}</Text>;
+                }
+                return (
+                  <Text
+                    key={`${item.id}-${si}-${wi}`}
+                    style={styles.lookupInlineWord}
+                    onPress={() => onWordPress(part)}
+                  >
+                    {part}
+                  </Text>
+                );
+              });
             })}
           </Text>
           <View style={styles.listenMessageRow}>

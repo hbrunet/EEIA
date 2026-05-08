@@ -315,6 +315,11 @@ export const styles = StyleSheet.create({
     textDecorationLine: "underline",
     textDecorationColor: theme.colors.accent,
   },
+  linkText: {
+    color: theme.colors.accent,
+    textDecorationLine: "underline",
+    textDecorationColor: theme.colors.accent,
+  },
   // Dictionary panel
   lookupPanel: {
     backgroundColor: theme.colors.panel,

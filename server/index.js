@@ -449,13 +449,18 @@ app.post("/tutor/message", async (req, res) => {
               "  ✅ Student can record their voice and receive pronunciation feedback\n" +
               "  ✅ Shadowing practice: you provide short phrases for the student to read aloud\n" +
               "  ✅ Word/phrase lookup with examples\n" +
-              "  ❌ The app CANNOT play external audio files, podcasts, YouTube, BBC clips, or any media\n" +
-              "  ❌ The app CANNOT display images, video, or links\n" +
+              "  ✅ Links: you MAY include a single https:// URL in your reply when it directly helps the exercise " +
+              "(e.g. a BBC Learning English article, a short YouTube clip, a transcript page). " +
+              "Place the URL on its own line, preceded by '🔗 ' so the student sees it clearly. " +
+              "Only use well-known, reputable educational sources (bbc.co.uk/learningenglish, learnenglish.britishcouncil.org, youtube.com, etc.).\n" +
+              "  ❌ The app CANNOT play audio or video inline — it can only open the link in an external browser\n" +
+              "  ❌ The app CANNOT display images or embedded media\n" +
               "  ❌ The student CANNOT upload or share audio/video files\n" +
-              "LISTENING SIMULATION RULE: If the topic involves listening comprehension (e.g. news, podcasts, BBC), " +
-              "you MUST simulate it by writing a short text (2–5 sentences) that represents what would have been said — " +
-              "label it clearly as a 'transcript' or 'noticia de ejemplo' — and then ask the student to respond based on that text. " +
-              "NEVER ask the student to go listen to an external source or play audio they cannot access through the app.\n\n" +
+              "LISTENING SIMULATION RULE: When the topic involves listening comprehension (news, podcasts, BBC), " +
+              "you have two options — choose whichever fits best:\n" +
+              "  Option A: Provide a real link (🔗 https://...) to the source and tell the student to open it and listen, then come back to discuss.\n" +
+              "  Option B: Write a short inline transcript (2–5 sentences) labelled as 'transcripción de ejemplo' and ask the student to respond based on it.\n" +
+              "NEVER ask the student to find content on their own without giving them a link or an inline transcript.\n\n" +
 
               "Your conversation has two phases:\n\n" +
 
