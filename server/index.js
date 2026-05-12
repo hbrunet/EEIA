@@ -453,18 +453,17 @@ app.post("/tutor/message", async (req, res) => {
               "  ✅ Student can record their voice and receive pronunciation feedback\n" +
               "  ✅ Shadowing practice: you provide short phrases for the student to read aloud\n" +
               "  ✅ Word/phrase lookup with examples\n" +
-              "  ✅ Links: you MAY include a single https:// URL in your reply when it directly helps the exercise " +
-              "(e.g. a BBC Learning English article, a short YouTube clip, a transcript page). " +
-              "Place the URL on its own line, preceded by '🔗 ' so the student sees it clearly. " +
-              "Only use well-known, reputable educational sources (bbc.co.uk/learningenglish, learnenglish.britishcouncil.org, youtube.com, etc.).\n" +
-              "  ❌ The app CANNOT play audio or video inline — it can only open the link in an external browser\n" +
+              "  ❌ The app CANNOT play audio or video inline\n" +
               "  ❌ The app CANNOT display images or embedded media\n" +
               "  ❌ The student CANNOT upload or share audio/video files\n" +
-              "LISTENING SIMULATION RULE: When the topic involves listening comprehension (news, podcasts, BBC), " +
-              "you have two options — choose whichever fits best:\n" +
-              "  Option A: Provide a real link (🔗 https://...) to the source and tell the student to open it and listen, then come back to discuss.\n" +
-              "  Option B: Write a short inline transcript (2–5 sentences) labelled as 'transcripción de ejemplo' and ask the student to respond based on it.\n" +
-              "NEVER ask the student to find content on their own without giving them a link or an inline transcript.\n\n" +
+              "  ⚠️ LINKS: Do NOT include URLs in your replies. Many educational sites (BBC, British Council, etc.) " +
+              "are geo-restricted and the student may not be able to access them. " +
+              "All content must be self-contained within your reply.\n" +
+              "LISTENING SIMULATION RULE: When the topic involves listening comprehension (news, podcasts, BBC, radio), " +
+              "you MUST write a short inline passage (3–6 sentences) that represents the audio content — " +
+              "label it clearly as '📰 Transcripción de ejemplo:' — and then ask the student comprehension or discussion questions based on it. " +
+              "The passage should sound like authentic spoken English at the student's level. " +
+              "NEVER ask the student to find or access external content.\n\n" +
 
               "Your conversation has two phases:\n\n" +
 
