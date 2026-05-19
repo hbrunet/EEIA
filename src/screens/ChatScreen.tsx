@@ -95,6 +95,7 @@ export function ChatScreen() {
   const beginnerMode = isBeginnerLevel(progress?.profile.level);
   const [suggestedTopics, setSuggestedTopics] = useState<TopicSuggestion[]>([]);
   const [topicsLoading, setTopicsLoading] = useState(false);
+  const [pendingTopicSelection, setPendingTopicSelection] = useState(false);
 
   useEffect(() => {
     if (!progress || !profileLevelConfigured) return;
@@ -342,6 +343,7 @@ export function ChatScreen() {
             setMessages([]);
             setSelectedSuggestedTopic(null);
             setPhase("setup");
+            setPendingTopicSelection(false);
             setLastPronunciationHint(null);
             setLastSource(null);
             setError(null);
@@ -393,6 +395,7 @@ export function ChatScreen() {
       const hasPronunciationHint = Boolean(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null");
       if (!latestProgress?.profile.level && response.capturedLevel) {
         await setProfileLevelFromChat(response.capturedLevel);
+        setPendingTopicSelection(true);
       }
         if (!latestProgress?.profile.name?.trim() && response.capturedName) {
           await setProfileNameFromChat(response.capturedName);
@@ -593,7 +596,7 @@ export function ChatScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {messages.length === 0 && (
+        {messages.length === 0 && !pendingTopicSelection && (
           <>
             {phase === "setup" && profileLevelConfigured && (topicsLoading || suggestedTopics.length > 0) && (
               <TopicSuggestCard
@@ -628,6 +631,22 @@ export function ChatScreen() {
             onWordPress={(word) => void onAssistantWordPress(word)}
           />
         ))}
+        {pendingTopicSelection && phase === "setup" && (topicsLoading || suggestedTopics.length > 0) && (
+          <TopicSuggestCard
+            topics={suggestedTopics}
+            loading={topicsLoading}
+            selectedTopic={selectedSuggestedTopic}
+            onSelectTopic={(topic) => {
+              setSelectedSuggestedTopic(topic);
+              setMessage(`Quiero practicar: ${topic}`);
+            }}
+            onStartWithTopic={(topic) => {
+              setPendingTopicSelection(false);
+              void onSend(`Quiero practicar: ${topic}`);
+            }}
+            disabled={actionDisabled}
+          />
+        )}
         {loading && <TypingIndicator />}
         {lastPronunciationHint && (
           <View style={styles.pronunciationBox}>
