@@ -3,16 +3,34 @@
     "version": ">= 18.0.0"
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "main",
+      "env": {
+        "APP_VARIANT": "development",
+        "EXPO_PUBLIC_API_BASE_URL": "https://eeia.onrender.com"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "preview": {
       "distribution": "internal",
       "channel": "main",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://eeia.onrender.com"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
       "channel": "production",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://eeia.onrender.com"
+      }
     }
   },
   "submit": {
