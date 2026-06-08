@@ -436,7 +436,12 @@ app.post("/tutor/message", async (req, res) => {
                   (currentTopic ? `The established practice topic is: "${currentTopic}". ` : "") +
                   "DO NOT restart or reset the conversation. DO NOT greet the student as if they just arrived. DO NOT ask for their name or level again. " +
                   "Continue the practice conversation naturally from where it left off. " +
-                  "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n\n"
+                  "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n" +
+                  (currentTopic
+                    ? `CRITICAL — TOPIC LOCK: The practice objective "${currentTopic}" is FIXED for this entire session. ` +
+                      "If the student goes off-topic or asks something unrelated, answer very briefly (one sentence max) and IMMEDIATELY steer the conversation back to the established practice objective. " +
+                      "Never abandon or forget the practice goal. Every reply must advance or revisit that objective.\n\n"
+                    : "\n")
                 : (hasConfiguredName && hasConfiguredLevel && history.length === 0)
                   ? "⚠️ SESSION STATE: The student's name and level are already configured in their profile. " +
                     "This is the START of a new practice session and the student's message IS their chosen topic. " +
@@ -488,6 +493,9 @@ app.post("/tutor/message", async (req, res) => {
               (normalizedLearnerStage?.stage
                 ? `- If a normalized level category is provided in profile (${normalizedLearnerStage.stage}), prioritize it over guessed level from conversation.\n`
                 : "") +
+              "TOPIC ADHERENCE RULE: The practice topic is the session's primary objective. Always bring every reply back to it. " +
+              "If the student veers off-topic, answer briefly (one sentence) then redirect: 'Let's get back to our topic — [restate the topic]. [next exercise step]'. " +
+              "Never let the conversation drift for more than one exchange without returning to the objective.\n" +
               "IMPORTANT: adapt everything to the student's level:\n" +
               "- For 'nunca estudié / recién empiezo' (beginners, may be children): stay mostly IN SPANISH, introduce single English words or very short phrases, use encouraging and playful language, keep it very simple and fun. Never switch fully to English until they are ready.\n" +
               "- For 'básico': mix Spanish explanations with short English sentences. Introduce simple structures.\n" +

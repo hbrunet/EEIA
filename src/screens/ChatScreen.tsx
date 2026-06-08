@@ -401,10 +401,9 @@ export function ChatScreen() {
           await setProfileNameFromChat(response.capturedName);
       }
       const suggestedTopic = (response.suggestedGoal || "").trim();
-      if (suggestedTopic) {
-        sessionRef.current.topic = suggestedTopic.slice(0, 100);
-      } else if (!sessionRef.current.topic) {
-        sessionRef.current.topic = trimmed.slice(0, 80);
+      if (!sessionRef.current.topic) {
+        // Lock the practice topic on the first turn — never overwrite it
+        sessionRef.current.topic = (suggestedTopic || trimmed).slice(0, 100);
       }
       sessionRef.current.turns += 1;
       sessionRef.current.correctionCount += hasCorrection ? 1 : 0;
