@@ -4,7 +4,7 @@ import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { fetchTopicSuggestions, lookupTutorTerm, postTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
+import { fetchTopicSuggestions, lookupTutorTerm, streamTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
 import { TopicSuggestion } from "../types/progress";
 import { theme } from "../ui/theme";
@@ -51,7 +51,9 @@ export function ChatScreen() {
   const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastSource, setLastSource] = useState<"openai" | "gemini" | "groq" | "fallback" | null>(null);
   const [lastPronunciationHint, setLastPronunciationHint] = useState<string | null>(null);
@@ -360,6 +362,7 @@ export function ChatScreen() {
     setError(null);
     setVoiceClarity(null);
     setLoading(true);
+    setIsStreaming(false);
 
     const historyWindow = messages.slice(-CONTEXT_WINDOW).map((item) => ({
       role: item.role,
@@ -367,85 +370,106 @@ export function ChatScreen() {
     }));
 
     const userMessageId = `${Date.now()}-u`;
+    const assistantMessageId = `${Date.now()}-a`;
+    streamingMessageIdRef.current = assistantMessageId;
 
     setMessages((current) => [
       ...current,
       { id: userMessageId, role: "user", text: trimmed, correctionExpanded: false },
     ]);
 
+    setMessage("");
+    if (forcedMessage) setSelectedSuggestedTopic(null);
+    setLastTranslationOriginal(null);
+    setTranscriptionLanguage("en");
+
+    const latestProgress = progressRef.current;
+    const learnerProfile = latestProgress ? {
+      name: latestProgress.profile.name,
+      level: latestProgress.profile.level,
+      grammarAccuracy: latestProgress.metrics.grammarAccuracy,
+      fluencyScore: latestProgress.metrics.fluencyScore,
+      pronunciationScore: latestProgress.metrics.pronunciationScore,
+      weaknesses: latestProgress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
+      goals: latestProgress.profile.goals,
+      currentPhase: phase,
+      currentTopic: sessionRef.current.topic || undefined,
+    } : undefined;
+
     try {
-      const latestProgress = progressRef.current;
-      const response = await postTutorMessage(trimmed, historyWindow, latestProgress ? {
-          name: latestProgress.profile.name,
-          level: latestProgress.profile.level,
-          grammarAccuracy: latestProgress.metrics.grammarAccuracy,
-          fluencyScore: latestProgress.metrics.fluencyScore,
-          pronunciationScore: latestProgress.metrics.pronunciationScore,
-          weaknesses: latestProgress.weaknesses.slice(0, 3).map((w) => ({ area: w.area, detail: w.detail, severity: w.severity })),
-          goals: latestProgress.profile.goals,
-          currentPhase: phase,
-          currentTopic: sessionRef.current.topic || undefined,
-      } : undefined);
-      setLastSource(response.source || null);
-      setLastActivityAt(Date.now());
-      setIsInactive(false);
-          const correctionText = response.correction && response.correction.toLowerCase() !== "null" ? response.correction : null;
-      setLastPronunciationHint(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null" ? response.pronunciationHint : null);
-          const hasCorrection = Boolean(correctionText);
-      const hasPronunciationHint = Boolean(response.pronunciationHint && response.pronunciationHint.toLowerCase() !== "null");
-      if (!latestProgress?.profile.level && response.capturedLevel) {
-        await setProfileLevelFromChat(response.capturedLevel);
-        setPendingTopicSelection(true);
-      }
-        if (!latestProgress?.profile.name?.trim() && response.capturedName) {
-          await setProfileNameFromChat(response.capturedName);
-      }
-      const suggestedTopic = (response.suggestedGoal || "").trim();
-      if (!sessionRef.current.topic) {
-        // Lock the practice topic on the first turn — never overwrite it
-        sessionRef.current.topic = (suggestedTopic || trimmed).slice(0, 100);
-      }
-      sessionRef.current.turns += 1;
-      sessionRef.current.correctionCount += hasCorrection ? 1 : 0;
-      sessionRef.current.pronunciationHintCount += hasPronunciationHint ? 1 : 0;
-      sessionRef.current.source = response.source || "fallback";
+      await streamTutorMessage(
+        trimmed,
+        historyWindow,
+        learnerProfile,
+        {
+          onChunk: (text) => {
+            setIsStreaming(true);
+            setMessages((current) => {
+              const existing = current.find((m) => m.id === assistantMessageId);
+              if (existing) {
+                return current.map((m) =>
+                  m.id === assistantMessageId ? { ...m, text: m.text + text } : m
+                );
+              }
+              return [...current, { id: assistantMessageId, role: "assistant", text }];
+            });
+            scrollToLatest(false);
+          },
+          onDone: async (meta) => {
+            setLastSource(meta.source || null);
+            setLastActivityAt(Date.now());
+            setIsInactive(false);
+            streamingMessageIdRef.current = null;
 
-      await recordChatTurnFeedback({
-        hadCorrection: hasCorrection,
-        hadPronunciationHint: hasPronunciationHint,
-      });
+            const correctionText = meta.correction && meta.correction.toLowerCase() !== "null" ? meta.correction : null;
+            setLastPronunciationHint(meta.pronunciationHint && meta.pronunciationHint.toLowerCase() !== "null" ? meta.pronunciationHint : null);
+            const hasCorrection = Boolean(correctionText);
+            const hasPronunciationHint = Boolean(meta.pronunciationHint && meta.pronunciationHint.toLowerCase() !== "null");
 
-      if (sessionRef.current.turns >= SESSION_CHECKPOINT_TURNS) {
-        await saveChatSessionCheckpoint();
-      }
+            if (!latestProgress?.profile.level && meta.capturedLevel) {
+              await setProfileLevelFromChat(meta.capturedLevel);
+              setPendingTopicSelection(true);
+            }
+            if (!latestProgress?.profile.name?.trim() && meta.capturedName) {
+              await setProfileNameFromChat(meta.capturedName);
+            }
 
-      // Phase can advance but never revert to setup
-      if (response.phase === "practice") setPhase("practice");
+            const suggestedTopic = (meta.suggestedGoal || "").trim();
+            if (!sessionRef.current.topic) {
+              sessionRef.current.topic = (suggestedTopic || trimmed).slice(0, 100);
+            }
+            sessionRef.current.turns += 1;
+            sessionRef.current.correctionCount += hasCorrection ? 1 : 0;
+            sessionRef.current.pronunciationHintCount += hasPronunciationHint ? 1 : 0;
+            sessionRef.current.source = meta.source || "fallback";
 
-      setMessages((current) => {
-        const withCorrection = correctionText
-          ? current.map((item) => item.id === userMessageId ? { ...item, correctionHint: correctionText } : item)
-          : current;
+            if (correctionText) {
+              setMessages((current) =>
+                current.map((m) =>
+                  m.id === userMessageId ? { ...m, correctionHint: correctionText } : m
+                )
+              );
+            }
 
-        return [
-          ...withCorrection,
-          { id: `${Date.now()}-a`, role: "assistant", text: response.reply },
-        ];
-      });
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
-
-      await updateGoal(response.suggestedGoal);
+            await recordChatTurnFeedback({ hadCorrection: hasCorrection, hadPronunciationHint: hasPronunciationHint });
+            if (sessionRef.current.turns >= SESSION_CHECKPOINT_TURNS) await saveChatSessionCheckpoint();
+            if (meta.phase === "practice") setPhase("practice");
+            await updateGoal(meta.suggestedGoal);
+            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+          },
+          onError: (err) => {
+            console.error("[Stream] error", err);
+            setError("No se pudo conectar con el tutor. Verificá que el backend esté activo e intentá de nuevo.");
+            streamingMessageIdRef.current = null;
+          },
+        },
+      );
     } catch {
       setError("No se pudo conectar con el tutor. Verificá que el backend esté activo e intentá de nuevo.");
     } finally {
       setLoading(false);
+      setIsStreaming(false);
     }
-
-    setMessage("");
-    if (forcedMessage) setSelectedSuggestedTopic(null);
-    // Reset per-message state after send
-    setLastTranslationOriginal(null);
-    setTranscriptionLanguage("en");
   }
 
   async function onMicPress() {
@@ -646,7 +670,7 @@ export function ChatScreen() {
             disabled={actionDisabled}
           />
         )}
-        {loading && <TypingIndicator />}
+        {loading && !isStreaming && <TypingIndicator />}
         {lastPronunciationHint && (
           <View style={styles.pronunciationBox}>
             <Text style={styles.pronunciationLabel}>🗣 Pronunciación</Text>

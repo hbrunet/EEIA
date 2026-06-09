@@ -356,50 +356,239 @@ function buildLookupFallback(term) {
   };
 }
 
+/**
+ * Shared request-parsing logic for both /tutor/message and /tutor/message/stream.
+ * Returns parsed fields plus pre-computed flags used by both endpoints.
+ */
+function parseTutorRequest(req) {
+  const message = String(req.body?.message || "").trim();
+  const history = sanitizeHistory(req.body?.history);
+  const learnerProfile =
+    req.body?.learnerProfile && typeof req.body.learnerProfile === "object"
+      ? req.body.learnerProfile
+      : null;
+  const hasConfiguredLevel =
+    typeof learnerProfile?.level === "string" && learnerProfile.level.trim().length > 0;
+  const hasConfiguredName =
+    typeof learnerProfile?.name === "string" && learnerProfile.name.trim().length > 0;
+  const isInPracticePhase = learnerProfile?.currentPhase === "practice";
+  const currentTopic =
+    typeof learnerProfile?.currentTopic === "string" && learnerProfile.currentTopic.trim().length > 0
+      ? learnerProfile.currentTopic.trim()
+      : null;
+  const normalizedLearnerStage = normalizeLearnerStage(learnerProfile?.level);
+  const capturedLevel = !hasConfiguredLevel ? inferCefrLevelFromMessage(message) : null;
+  const capturedName = !hasConfiguredName
+    ? inferNameFromMessage(message) ||
+      (didAssistantRecentlyAskName(history) ? inferShortNameFromMessage(message) : null)
+    : null;
+  const hasLevelAfterMessage = hasConfiguredLevel || Boolean(capturedLevel);
+  const hasNameAfterMessage = hasConfiguredName || Boolean(capturedName);
+  const shouldAskNameOnly = !hasNameAfterMessage;
+  const shouldAskLevelOnly = !shouldAskNameOnly && !hasLevelAfterMessage;
+  const shouldAskTopicOnly =
+    !shouldAskNameOnly && !shouldAskLevelOnly && !hasConfiguredLevel && Boolean(capturedLevel);
+  return {
+    message,
+    history,
+    learnerProfile,
+    hasConfiguredLevel,
+    hasConfiguredName,
+    isInPracticePhase,
+    currentTopic,
+    normalizedLearnerStage,
+    capturedLevel,
+    capturedName,
+    hasLevelAfterMessage,
+    hasNameAfterMessage,
+    shouldAskNameOnly,
+    shouldAskLevelOnly,
+    shouldAskTopicOnly,
+  };
+}
+
+/**
+ * Builds the tutor system prompt.
+ * Pass `streaming: true` to get a plain-text + ---META--- format instead of JSON mode.
+ */
+function buildTutorSystemPrompt(params, { streaming = false } = {}) {
+  const {
+    learnerProfile,
+    normalizedLearnerStage,
+    hasConfiguredName,
+    hasConfiguredLevel,
+    isInPracticePhase,
+    currentTopic,
+    hasLevelAfterMessage,
+    hasNameAfterMessage,
+    history,
+  } = params;
+
+  return (
+    "You are a friendly English coach for Spanish-speaking students of ALL ages, including young children who are just starting or want to start learning English.\n" +
+    (learnerProfile
+      ? "\nSTUDENT PROFILE (use this to personalize your coaching):\n" +
+        (learnerProfile.level ? `- Declared level: ${learnerProfile.level}\n` : "") +
+        (normalizedLearnerStage?.stage
+          ? `- Normalized level category: ${normalizedLearnerStage.stage} (${normalizedLearnerStage.sourceLevel}, ${normalizedLearnerStage.guidance})\n`
+          : "") +
+        (typeof learnerProfile.grammarAccuracy === "number"
+          ? `- Grammar accuracy: ${learnerProfile.grammarAccuracy}% — ${
+              learnerProfile.grammarAccuracy < 50
+                ? "needs significant grammar work"
+                : learnerProfile.grammarAccuracy < 75
+                ? "grammar is developing, reinforce structure"
+                : "grammar is solid, focus on fluency and nuance"
+            }\n`
+          : "") +
+        (typeof learnerProfile.fluencyScore === "number"
+          ? `- Fluency score: ${learnerProfile.fluencyScore}/10 — ${
+              learnerProfile.fluencyScore < 4
+                ? "encourage longer responses, don't rush"
+                : learnerProfile.fluencyScore < 7
+                ? "push for more complex sentence structures"
+                : "fluency is good, challenge with faster pacing and idioms"
+            }\n`
+          : "") +
+        (Array.isArray(learnerProfile.weaknesses) && learnerProfile.weaknesses.length > 0
+          ? `- Main weaknesses to target: ${learnerProfile.weaknesses
+              .map((w) => `${w.detail} (${w.area}, priority ${w.severity}/5)`)
+              .join("; ")}\n`
+          : "") +
+        (Array.isArray(learnerProfile.goals) && learnerProfile.goals.length > 0
+          ? `- Student goals: ${learnerProfile.goals.join(", ")}\n`
+          : "") +
+        "Use this profile to: adjust difficulty, focus corrections on their weak areas, prioritize their goals, and propose exercises that target their specific weaknesses.\n"
+      : "") +
+    (isInPracticePhase
+      ? "⚠️ SESSION STATE: The student is ALREADY IN PRACTICE PHASE. " +
+        (currentTopic ? `The established practice topic is: "${currentTopic}". ` : "") +
+        "DO NOT restart or reset the conversation. DO NOT greet the student as if they just arrived. DO NOT ask for their name or level again. " +
+        "Continue the practice conversation naturally from where it left off. " +
+        "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n" +
+        (currentTopic
+          ? `CRITICAL — TOPIC LOCK: The practice objective "${currentTopic}" is FIXED for this entire session. ` +
+            "If the student goes off-topic or asks something unrelated, answer very briefly (one sentence max) and IMMEDIATELY steer the conversation back to the established practice objective. " +
+            "Never abandon or forget the practice goal. Every reply must advance or revisit that objective.\n\n"
+          : "\n")
+      : hasConfiguredName && hasConfiguredLevel && history.length === 0
+      ? "⚠️ SESSION STATE: The student's name and level are already configured in their profile. " +
+        "This is the START of a new practice session and the student's message IS their chosen topic. " +
+        "DO NOT greet them as if they just arrived. DO NOT say 'me alegra verte' or similar welcome phrases. DO NOT ask for name or level again. " +
+        "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. " +
+        (normalizedLearnerStage?.stage === "intermedio" || normalizedLearnerStage?.stage === "avanzado"
+          ? "CRITICAL LANGUAGE RULE for this session: after the single Spanish acknowledgment line, write the ENTIRE exercise IN ENGLISH — the student is " +
+            normalizedLearnerStage.stage +
+            " level (" +
+            normalizedLearnerStage.sourceLevel +
+            ") and must practice in English. Do NOT write the exercise body in Spanish.\n\n"
+          : "Stick to Spanish for the exercise body since the student is a beginner.\n\n") +
+        "Set phase to 'practice'.\n\n"
+      : "") +
+    "APP TECHNICAL CAPABILITIES (strict constraints — never violate these):\n" +
+    "The student is using a mobile chat app with the following capabilities:\n" +
+    "  ✅ Text chat (student types or speaks — voice is transcribed automatically)\n" +
+    "  ✅ Student can record their voice and receive pronunciation feedback\n" +
+    "  ✅ Shadowing practice: you provide short phrases for the student to read aloud\n" +
+    "  ✅ Word/phrase lookup with examples\n" +
+    "  ❌ The app CANNOT play audio or video inline\n" +
+    "  ❌ The app CANNOT display images or embedded media\n" +
+    "  ❌ The student CANNOT upload or share audio/video files\n" +
+    "  ⚠️ LINKS: Do NOT include URLs in your replies. Many educational sites (BBC, British Council, etc.) " +
+    "are geo-restricted and the student may not be able to access them. " +
+    "All content must be self-contained within your reply.\n" +
+    "LISTENING SIMULATION RULE: When the topic involves listening comprehension (news, podcasts, BBC, radio), " +
+    "you MUST write a short inline passage (3–6 sentences) that represents the audio content — " +
+    "label it clearly as '📰 Transcripción de ejemplo:' — and then ask the student comprehension or discussion questions based on it. " +
+    "The passage should sound like authentic spoken English at the student's level. " +
+    "NEVER ask the student to find or access external content.\n\n" +
+    "Your conversation has two phases:\n\n" +
+    "PHASE 1 - SETUP:\n" +
+    "Applies when the conversation history has no established level or topic yet.\n" +
+    "- Greet the student warmly IN SPANISH.\n" +
+    (hasConfiguredName
+      ? "- The student's name is already configured in profile. DO NOT ask their name again.\n"
+      : "- Ask the student's name in a natural, short way (e.g. '¿Cómo te llamás?').\n") +
+    "- Critical flow rule: if name is missing, ask ONLY for name in this turn and do NOT ask level or topic in the same message.\n" +
+    (hasConfiguredLevel
+      ? "- The student's level is already configured in profile. DO NOT ask their level again.\n"
+      : "- Ask their English level using these options: 'nunca estudié inglés / recién empiezo', 'básico', 'intermedio' or 'avanzado'.\n") +
+    "- Ask what topic or situation they want to practice. For beginners or children, suggest simple options like: colores, animales, números, saludos, la familia, el cuerpo, objetos del aula.\n" +
+    (hasConfiguredLevel && hasConfiguredName
+      ? "- Once you have a topic from the student, confirm in Spanish and announce you will now begin.\n"
+      : "- Once you have name, level and topic from the student, confirm in Spanish and announce you will now begin.\n") +
+    "- Set phase to 'setup'.\n\n" +
+    "PHASE 2 - PRACTICE:\n" +
+    "Applies once level and topic are established in the history.\n" +
+    (normalizedLearnerStage?.stage
+      ? `- If a normalized level category is provided in profile (${normalizedLearnerStage.stage}), prioritize it over guessed level from conversation.\n`
+      : "") +
+    "TOPIC ADHERENCE RULE: The practice topic is the session's primary objective. Always bring every reply back to it. " +
+    "If the student veers off-topic, answer briefly (one sentence) then redirect: 'Let's get back to our topic — [restate the topic]. [next exercise step]'. " +
+    "Never let the conversation drift for more than one exchange without returning to the objective.\n" +
+    "IMPORTANT: adapt everything to the student's level:\n" +
+    "- For 'nunca estudié / recién empiezo' (beginners, may be children): stay mostly IN SPANISH, introduce single English words or very short phrases, use encouraging and playful language, keep it very simple and fun. Never switch fully to English until they are ready.\n" +
+    "- For 'básico': mix Spanish explanations with short English sentences. Introduce simple structures.\n" +
+    "- For 'intermedio' or 'avanzado': conduct the conversation fully IN ENGLISH at the appropriate level.\n" +
+    "- Act as their conversation partner and guide on the chosen topic.\n" +
+    "- IMPORTANT about language in YOUR replies: the level rule always takes priority.\n" +
+    "  · Beginners ('nunca estudié / recién empiezo'): your reply MUST be IN SPANISH with only isolated English words/phrases embedded. NEVER reply in full English sentences to a beginner. If the student writes in Spanish that is perfectly fine and expected — answer in Spanish and introduce the English word gently.\n" +
+    "  · Básico: reply mostly in Spanish with short English sentences mixed in. If the student writes in Spanish, gently note the English equivalent but keep most of your reply in Spanish.\n" +
+    "  · Intermedio / Avanzado: conduct the conversation fully IN ENGLISH. If the student writes in Spanish, gently acknowledge it, respond in English, and encourage them to try in English.\n" +
+    "- If the student makes a WRITING error (typo, spelling), explain IN SPANISH and set correction.\n" +
+    "- If the student makes a GRAMMAR error (wrong tense, structure, agreement), explain IN SPANISH and set correction.\n" +
+    "- If the student makes a PRAGMATIC error (wrong register, culturally odd phrase, awkward wording for the context), explain IN SPANISH and set correction.\n" +
+    "- For beginners and children, only correct one error at a time and always celebrate effort before correcting.\n" +
+    "- If there are no errors, set correction to null.\n" +
+    "- Set phase to 'practice'.\n\n" +
+    (streaming
+      ? "Write your reply to the student naturally (no JSON wrapping). " +
+        "Then, immediately after your reply, on a new line write exactly the separator ---META--- " +
+        "and on that same line (no blank line between) append a single compact JSON object with ONLY these keys: " +
+        'correction (string or null), pronunciationHint (string or null), suggestedGoal (string), phase ("setup" or "practice"). ' +
+        'Example line: ---META---{"correction":null,"pronunciationHint":null,"suggestedGoal":"Practicar saludos","phase":"practice"}\n' +
+        "No other text after the JSON. Do NOT wrap your reply in JSON."
+      : "Respond ONLY with a valid JSON object with these keys:\n" +
+        "- reply (string): your response.\n" +
+        "- correction (string or null): correction explanation in Spanish, or null.\n" +
+        "- pronunciationHint (string or null): if the student used a word with tricky pronunciation, provide a brief phonetic hint IN SPANISH (e.g. 'though' → /ðoʊ/, la 'th' es sonora). Set to null otherwise.\n" +
+        "- suggestedGoal (string): short learning goal based on this exchange, written IN SPANISH.\n" +
+        "- phase (string): 'setup' or 'practice'.\n") +
+    "Always be patient, warm, encouraging and fun. Never be harsh. Adapt your tone to the student's age and level."
+  );
+}
+
+/**
+ * Computes the final phase value applying the same logic used by both endpoints.
+ */
+function resolveTutorPhase({ isInPracticePhase, parsedPhase, hasLevelAfterMessage, hasNameAfterMessage, hasConfiguredName, hasConfiguredLevel, historyLength }) {
+  if (isInPracticePhase) return "practice";
+  if (parsedPhase === "practice" && hasLevelAfterMessage && hasNameAfterMessage) return "practice";
+  if (hasConfiguredName && hasConfiguredLevel && historyLength === 0) return "practice";
+  return "setup";
+}
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true, model, provider: "groq", hasApiKey: Boolean(apiKey) });
 });
 
 app.post("/tutor/message", async (req, res) => {
   try {
-    const message = String(req.body?.message || "").trim();
-    const history = sanitizeHistory(req.body?.history);
-    const learnerProfile = req.body?.learnerProfile && typeof req.body.learnerProfile === "object"
-      ? req.body.learnerProfile
-      : null;
-    const hasConfiguredLevel = typeof learnerProfile?.level === "string" && learnerProfile.level.trim().length > 0;
-    const hasConfiguredName = typeof learnerProfile?.name === "string" && learnerProfile.name.trim().length > 0;
-    const isInPracticePhase = learnerProfile?.currentPhase === "practice";
-    const currentTopic = typeof learnerProfile?.currentTopic === "string" && learnerProfile.currentTopic.trim().length > 0
-      ? learnerProfile.currentTopic.trim()
-      : null;
-    const normalizedLearnerStage = normalizeLearnerStage(learnerProfile?.level);
-    const capturedLevel = !hasConfiguredLevel ? inferCefrLevelFromMessage(message) : null;
-    const capturedName = !hasConfiguredName
-      ? inferNameFromMessage(message) || (didAssistantRecentlyAskName(history) ? inferShortNameFromMessage(message) : null)
-      : null;
-    const hasLevelAfterMessage = hasConfiguredLevel || Boolean(capturedLevel);
-    const hasNameAfterMessage = hasConfiguredName || Boolean(capturedName);
-    const shouldAskNameOnly = !hasNameAfterMessage;
-    const shouldAskLevelOnly = !shouldAskNameOnly && !hasLevelAfterMessage;
-    const shouldAskTopicOnly = !shouldAskNameOnly && !shouldAskLevelOnly && !hasConfiguredLevel && Boolean(capturedLevel);
-    if (!message) {
-      return res.status(400).json({ error: "message is required" });
-    }
+    const parsed = parseTutorRequest(req);
+    const {
+      message, history, learnerProfile,
+      hasConfiguredLevel, hasConfiguredName, isInPracticePhase,
+      normalizedLearnerStage, capturedLevel, capturedName,
+      hasLevelAfterMessage, hasNameAfterMessage,
+      shouldAskNameOnly, shouldAskLevelOnly, shouldAskTopicOnly,
+    } = parsed;
 
-    if (shouldAskNameOnly) {
-      return res.json({ ...buildNameOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
-    }
-    if (shouldAskLevelOnly) {
-      return res.json({ ...buildLevelOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
-    }
-    if (shouldAskTopicOnly) {
-      return res.json({ ...buildTopicOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
-    }
+    if (!message) return res.status(400).json({ error: "message is required" });
 
-    if (!groq) {
-      return res.json(buildFallbackReply(message));
-    }
+    if (shouldAskNameOnly) return res.json({ ...buildNameOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
+    if (shouldAskLevelOnly) return res.json({ ...buildLevelOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
+    if (shouldAskTopicOnly) return res.json({ ...buildTopicOnlySetupReply(), capturedLevel, capturedName, source: groq ? "groq" : "fallback" });
+    if (!groq) return res.json(buildFallbackReply(message));
 
     try {
       const completion = await groq.chat.completions.create({
@@ -407,164 +596,22 @@ app.post("/tutor/message", async (req, res) => {
         temperature: 0.4,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content:
-              "You are a friendly English coach for Spanish-speaking students of ALL ages, including young children who are just starting or want to start learning English.\n" +
-              (learnerProfile ? (
-                "\nSTUDENT PROFILE (use this to personalize your coaching):\n" +
-                (learnerProfile.level ? `- Declared level: ${learnerProfile.level}\n` : "") +
-                (normalizedLearnerStage?.stage ? `- Normalized level category: ${normalizedLearnerStage.stage} (${normalizedLearnerStage.sourceLevel}, ${normalizedLearnerStage.guidance})\n` : "") +
-                (typeof learnerProfile.grammarAccuracy === "number" ? `- Grammar accuracy: ${learnerProfile.grammarAccuracy}% — ${
-                  learnerProfile.grammarAccuracy < 50 ? "needs significant grammar work" :
-                  learnerProfile.grammarAccuracy < 75 ? "grammar is developing, reinforce structure" :
-                  "grammar is solid, focus on fluency and nuance"}\n` : "") +
-                (typeof learnerProfile.fluencyScore === "number" ? `- Fluency score: ${learnerProfile.fluencyScore}/10 — ${
-                  learnerProfile.fluencyScore < 4 ? "encourage longer responses, don't rush" :
-                  learnerProfile.fluencyScore < 7 ? "push for more complex sentence structures" :
-                  "fluency is good, challenge with faster pacing and idioms"}\n` : "") +
-                (Array.isArray(learnerProfile.weaknesses) && learnerProfile.weaknesses.length > 0
-                  ? `- Main weaknesses to target: ${learnerProfile.weaknesses.map((w) => `${w.detail} (${w.area}, priority ${w.severity}/5)`).join("; ")}\n`
-                  : "") +
-                (Array.isArray(learnerProfile.goals) && learnerProfile.goals.length > 0
-                  ? `- Student goals: ${learnerProfile.goals.join(", ")}\n`
-                  : "") +
-                "Use this profile to: adjust difficulty, focus corrections on their weak areas, prioritize their goals, and propose exercises that target their specific weaknesses.\n"
-              ) : "") +
-              (isInPracticePhase
-                ? "⚠️ SESSION STATE: The student is ALREADY IN PRACTICE PHASE. " +
-                  (currentTopic ? `The established practice topic is: "${currentTopic}". ` : "") +
-                  "DO NOT restart or reset the conversation. DO NOT greet the student as if they just arrived. DO NOT ask for their name or level again. " +
-                  "Continue the practice conversation naturally from where it left off. " +
-                  "The conversation history provided may be truncated (only the most recent messages), but the session has been ongoing — assume level and topic are already established.\n" +
-                  (currentTopic
-                    ? `CRITICAL — TOPIC LOCK: The practice objective "${currentTopic}" is FIXED for this entire session. ` +
-                      "If the student goes off-topic or asks something unrelated, answer very briefly (one sentence max) and IMMEDIATELY steer the conversation back to the established practice objective. " +
-                      "Never abandon or forget the practice goal. Every reply must advance or revisit that objective.\n\n"
-                    : "\n")
-                : (hasConfiguredName && hasConfiguredLevel && history.length === 0)
-                  ? "⚠️ SESSION STATE: The student's name and level are already configured in their profile. " +
-                    "This is the START of a new practice session and the student's message IS their chosen topic. " +
-                    "DO NOT greet them as if they just arrived. DO NOT say 'me alegra verte' or similar welcome phrases. DO NOT ask for name or level again. " +
-                    "Acknowledge the topic briefly (one short sentence in Spanish) and IMMEDIATELY begin the practice exercise. " +
-                    (normalizedLearnerStage?.stage === "intermedio" || normalizedLearnerStage?.stage === "avanzado"
-                      ? "CRITICAL LANGUAGE RULE for this session: after the single Spanish acknowledgment line, write the ENTIRE exercise IN ENGLISH — the student is " + normalizedLearnerStage.stage + " level (" + normalizedLearnerStage.sourceLevel + ") and must practice in English. Do NOT write the exercise body in Spanish.\n\n"
-                      : "Stick to Spanish for the exercise body since the student is a beginner.\n\n") +
-                    "Set phase to 'practice'.\n\n"
-                  : "") +
-              "APP TECHNICAL CAPABILITIES (strict constraints — never violate these):\n" +
-              "The student is using a mobile chat app with the following capabilities:\n" +
-              "  ✅ Text chat (student types or speaks — voice is transcribed automatically)\n" +
-              "  ✅ Student can record their voice and receive pronunciation feedback\n" +
-              "  ✅ Shadowing practice: you provide short phrases for the student to read aloud\n" +
-              "  ✅ Word/phrase lookup with examples\n" +
-              "  ❌ The app CANNOT play audio or video inline\n" +
-              "  ❌ The app CANNOT display images or embedded media\n" +
-              "  ❌ The student CANNOT upload or share audio/video files\n" +
-              "  ⚠️ LINKS: Do NOT include URLs in your replies. Many educational sites (BBC, British Council, etc.) " +
-              "are geo-restricted and the student may not be able to access them. " +
-              "All content must be self-contained within your reply.\n" +
-              "LISTENING SIMULATION RULE: When the topic involves listening comprehension (news, podcasts, BBC, radio), " +
-              "you MUST write a short inline passage (3–6 sentences) that represents the audio content — " +
-              "label it clearly as '📰 Transcripción de ejemplo:' — and then ask the student comprehension or discussion questions based on it. " +
-              "The passage should sound like authentic spoken English at the student's level. " +
-              "NEVER ask the student to find or access external content.\n\n" +
-
-              "Your conversation has two phases:\n\n" +
-
-              "PHASE 1 - SETUP:\n" +
-              "Applies when the conversation history has no established level or topic yet.\n" +
-              "- Greet the student warmly IN SPANISH.\n" +
-              (hasConfiguredName
-                ? "- The student's name is already configured in profile. DO NOT ask their name again.\n"
-                : "- Ask the student's name in a natural, short way (e.g. '¿Cómo te llamás?').\n") +
-              "- Critical flow rule: if name is missing, ask ONLY for name in this turn and do NOT ask level or topic in the same message.\n" +
-              (hasConfiguredLevel
-                ? "- The student's level is already configured in profile. DO NOT ask their level again.\n"
-                : "- Ask their English level using these options: 'nunca estudié inglés / recién empiezo', 'básico', 'intermedio' or 'avanzado'.\n") +
-              "- Ask what topic or situation they want to practice. For beginners or children, suggest simple options like: colores, animales, números, saludos, la familia, el cuerpo, objetos del aula.\n" +
-              (hasConfiguredLevel && hasConfiguredName
-                ? "- Once you have a topic from the student, confirm in Spanish and announce you will now begin.\n"
-                : "- Once you have name, level and topic from the student, confirm in Spanish and announce you will now begin.\n") +
-              "- Set phase to 'setup'.\n\n" +
-
-              "PHASE 2 - PRACTICE:\n" +
-              "Applies once level and topic are established in the history.\n" +
-              (normalizedLearnerStage?.stage
-                ? `- If a normalized level category is provided in profile (${normalizedLearnerStage.stage}), prioritize it over guessed level from conversation.\n`
-                : "") +
-              "TOPIC ADHERENCE RULE: The practice topic is the session's primary objective. Always bring every reply back to it. " +
-              "If the student veers off-topic, answer briefly (one sentence) then redirect: 'Let's get back to our topic — [restate the topic]. [next exercise step]'. " +
-              "Never let the conversation drift for more than one exchange without returning to the objective.\n" +
-              "IMPORTANT: adapt everything to the student's level:\n" +
-              "- For 'nunca estudié / recién empiezo' (beginners, may be children): stay mostly IN SPANISH, introduce single English words or very short phrases, use encouraging and playful language, keep it very simple and fun. Never switch fully to English until they are ready.\n" +
-              "- For 'básico': mix Spanish explanations with short English sentences. Introduce simple structures.\n" +
-              "- For 'intermedio' or 'avanzado': conduct the conversation fully IN ENGLISH at the appropriate level.\n" +
-              "- Act as their conversation partner and guide on the chosen topic.\n" +
-              "- IMPORTANT about language in YOUR replies: the level rule always takes priority.\n" +
-              "  · Beginners ('nunca estudié / recién empiezo'): your reply MUST be IN SPANISH with only isolated English words/phrases embedded. NEVER reply in full English sentences to a beginner. If the student writes in Spanish that is perfectly fine and expected — answer in Spanish and introduce the English word gently.\n" +
-              "  · Básico: reply mostly in Spanish with short English sentences mixed in. If the student writes in Spanish, gently note the English equivalent but keep most of your reply in Spanish.\n" +
-              "  · Intermedio / Avanzado: conduct the conversation fully IN ENGLISH. If the student writes in Spanish, gently acknowledge it, respond in English, and encourage them to try in English.\n" +
-              "- If the student makes a WRITING error (typo, spelling), explain IN SPANISH and set correction.\n" +
-              "- If the student makes a GRAMMAR error (wrong tense, structure, agreement), explain IN SPANISH and set correction.\n" +
-              "- If the student makes a PRAGMATIC error (wrong register, culturally odd phrase, awkward wording for the context), explain IN SPANISH and set correction.\n" +
-              "- For beginners and children, only correct one error at a time and always celebrate effort before correcting.\n" +
-              "- If there are no errors, set correction to null.\n" +
-              "- Set phase to 'practice'.\n\n" +
-
-              "Respond ONLY with a valid JSON object with these keys:\n" +
-              "- reply (string): your response.\n" +
-              "- correction (string or null): correction explanation in Spanish, or null.\n" +
-              "- pronunciationHint (string or null): if the student used a word with tricky pronunciation, provide a brief phonetic hint IN SPANISH (e.g. 'though' → /ðoʊ/, la 'th' es sonora). Set to null otherwise.\n" +
-              "- suggestedGoal (string): short learning goal based on this exchange, written IN SPANISH.\n" +
-              "- phase (string): 'setup' or 'practice'.\n" +
-              "Always be patient, warm, encouraging and fun. Never be harsh. Adapt your tone to the student's age and level.",
-          },
-          {
-            role: "user",
-            content:
-              `Conversation context: ${JSON.stringify(history)}\n` +
-              `Latest student message: ${message}`,
-          },
+          { role: "system", content: buildTutorSystemPrompt(parsed, { streaming: false }) },
+          { role: "user", content: `Conversation context: ${JSON.stringify(history)}\nLatest student message: ${message}` },
         ],
       });
 
       const raw = completion.choices?.[0]?.message?.content || "{}";
-      let parsed;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = buildFallbackReply(message);
-      }
+      let body;
+      try { body = JSON.parse(raw); } catch { body = buildFallbackReply(message); }
 
-      const modelReply = typeof parsed.reply === "string" ? parsed.reply : buildFallbackReply(message).reply;
-      const modelGoal =
-        typeof parsed.suggestedGoal === "string"
-          ? parsed.suggestedGoal
-          : buildFallbackReply(message).suggestedGoal;
-      const safeReply = modelReply;
-      const safeGoal = modelGoal;
-      const correction = typeof parsed.correction === "string" && parsed.correction.toLowerCase() !== "null" ? parsed.correction : null;
-      const pronunciationHint = typeof parsed.pronunciationHint === "string" && parsed.pronunciationHint.toLowerCase() !== "null" ? parsed.pronunciationHint : null;
-      // Keep setup until both name and level are captured/configured.
-      const phase = isInPracticePhase
-        ? "practice"
-        : (parsed.phase === "practice" && hasLevelAfterMessage && hasNameAfterMessage)
-          ? "practice"
-          : (hasConfiguredName && hasConfiguredLevel && history.length === 0)
-            ? "practice"
-            : "setup";
+      const safeReply = typeof body.reply === "string" ? body.reply : buildFallbackReply(message).reply;
+      const safeGoal = typeof body.suggestedGoal === "string" ? body.suggestedGoal : buildFallbackReply(message).suggestedGoal;
+      const correction = typeof body.correction === "string" && body.correction.toLowerCase() !== "null" ? body.correction : null;
+      const pronunciationHint = typeof body.pronunciationHint === "string" && body.pronunciationHint.toLowerCase() !== "null" ? body.pronunciationHint : null;
+      const phase = resolveTutorPhase({ isInPracticePhase, parsedPhase: body.phase, hasLevelAfterMessage, hasNameAfterMessage, hasConfiguredName, hasConfiguredLevel, historyLength: history.length });
 
-      return res.json({
-        reply: safeReply,
-        suggestedGoal: safeGoal,
-        correction,
-        pronunciationHint,
-        capturedLevel,
-        capturedName,
-        phase,
-        source: "groq",
-      });
+      return res.json({ reply: safeReply, suggestedGoal: safeGoal, correction, pronunciationHint, capturedLevel, capturedName, phase, source: "groq" });
     } catch (groqError) {
       console.error("Groq request failed, using fallback", groqError);
       return res.json({ ...buildFallbackReply(message), capturedLevel, capturedName, warning: groqError.message });
@@ -572,6 +619,115 @@ app.post("/tutor/message", async (req, res) => {
   } catch (error) {
     console.error("Tutor endpoint error", error);
     return res.status(500).json({ error: "internal_error" });
+  }
+});
+
+const META_SEP = "---META---";
+
+app.post("/tutor/message/stream", async (req, res) => {
+  const parsed = parseTutorRequest(req);
+  const {
+    message, history,
+    hasConfiguredLevel, hasConfiguredName, isInPracticePhase,
+    capturedLevel, capturedName,
+    hasLevelAfterMessage, hasNameAfterMessage,
+    shouldAskNameOnly, shouldAskLevelOnly, shouldAskTopicOnly,
+  } = parsed;
+
+  if (!message) return res.status(400).json({ error: "message is required" });
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  function sendEvent(data) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
+  function sendFallbackAsStream(fallbackReply) {
+    const { reply, suggestedGoal, correction = null, pronunciationHint = null, phase = "setup" } = fallbackReply;
+    sendEvent({ type: "chunk", text: reply });
+    sendEvent({ type: "done", correction, pronunciationHint, suggestedGoal: suggestedGoal || "", phase, capturedLevel, capturedName, source: "fallback" });
+    res.end();
+  }
+
+  if (shouldAskNameOnly) return sendFallbackAsStream({ ...buildNameOnlySetupReply(), phase: "setup" });
+  if (shouldAskLevelOnly) return sendFallbackAsStream({ ...buildLevelOnlySetupReply(), phase: "setup" });
+  if (shouldAskTopicOnly) return sendFallbackAsStream({ ...buildTopicOnlySetupReply(), phase: "setup" });
+  if (!groq) return sendFallbackAsStream(buildFallbackReply(message));
+
+  try {
+    const stream = await groq.chat.completions.create({
+      model,
+      temperature: 0.4,
+      stream: true,
+      messages: [
+        { role: "system", content: buildTutorSystemPrompt(parsed, { streaming: true }) },
+        { role: "user", content: `Conversation context: ${JSON.stringify(history)}\nLatest student message: ${message}` },
+      ],
+    });
+
+    // Buffer to hold incoming text until we can safely flush it.
+    // We keep up to (META_SEP.length - 1) chars buffered to detect the separator
+    // even when it arrives split across multiple chunks.
+    let pending = "";
+    let metaMode = false;
+    let metaBuffer = "";
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content || "";
+      if (!delta) continue;
+
+      if (metaMode) {
+        metaBuffer += delta;
+        continue;
+      }
+
+      pending += delta;
+
+      const sepIdx = pending.indexOf(META_SEP);
+      if (sepIdx !== -1) {
+        // Everything before the separator is reply text
+        const replyPart = pending.slice(0, sepIdx);
+        if (replyPart) sendEvent({ type: "chunk", text: replyPart });
+        metaBuffer = pending.slice(sepIdx + META_SEP.length);
+        pending = "";
+        metaMode = true;
+      } else {
+        // Flush everything except a trailing window that could be a partial separator
+        const safeLen = pending.length - (META_SEP.length - 1);
+        if (safeLen > 0) {
+          sendEvent({ type: "chunk", text: pending.slice(0, safeLen) });
+          pending = pending.slice(safeLen);
+        }
+      }
+    }
+
+    // Flush any remaining reply text (no META_SEP found at all)
+    if (!metaMode && pending) {
+      sendEvent({ type: "chunk", text: pending });
+    }
+
+    // Parse metadata from the buffer after ---META---
+    let meta = {};
+    const jsonStart = metaBuffer.indexOf("{");
+    const jsonEnd = metaBuffer.lastIndexOf("}");
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      try { meta = JSON.parse(metaBuffer.slice(jsonStart, jsonEnd + 1)); } catch { /* use empty meta */ }
+    }
+
+    const correction = typeof meta.correction === "string" && meta.correction.toLowerCase() !== "null" ? meta.correction : null;
+    const pronunciationHint = typeof meta.pronunciationHint === "string" && meta.pronunciationHint.toLowerCase() !== "null" ? meta.pronunciationHint : null;
+    const suggestedGoal = typeof meta.suggestedGoal === "string" ? meta.suggestedGoal : "";
+    const phase = resolveTutorPhase({ isInPracticePhase, parsedPhase: meta.phase, hasLevelAfterMessage, hasNameAfterMessage, hasConfiguredName, hasConfiguredLevel, historyLength: history.length });
+
+    sendEvent({ type: "done", correction, pronunciationHint, suggestedGoal, phase, capturedLevel, capturedName, source: "groq" });
+    res.end();
+  } catch (err) {
+    console.error("Stream endpoint error", err);
+    sendEvent({ type: "error", message: err.message });
+    res.end();
   }
 });
 

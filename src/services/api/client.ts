@@ -186,6 +186,77 @@ export async function postTutorMessage(
   });
 }
 
+export type StreamTutorCallbacks = {
+  onChunk: (text: string) => void;
+  onDone: (meta: Omit<TutorMessageResponse, "reply">) => void;
+  onError: (err: Error) => void;
+};
+
+export async function streamTutorMessage(
+  message: string,
+  history: TutorChatMessage[],
+  learnerProfile: TutorLearnerProfile | undefined,
+  callbacks: StreamTutorCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${env.apiBaseUrl}/tutor/message/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, learnerProfile }),
+      signal,
+    });
+  } catch (error) {
+    throw buildNetworkError("Stream request", error);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Stream request failed with status ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Streaming not supported by this environment");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Process complete SSE blocks (separated by \n\n)
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const dataLine = block.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) continue;
+      try {
+        const event = JSON.parse(dataLine.slice(6));
+        if (event.type === "chunk") {
+          callbacks.onChunk(String(event.text ?? ""));
+        } else if (event.type === "done") {
+          callbacks.onDone({
+            suggestedGoal: event.suggestedGoal ?? "",
+            correction: event.correction ?? null,
+            pronunciationHint: event.pronunciationHint ?? null,
+            capturedLevel: event.capturedLevel ?? null,
+            capturedName: event.capturedName ?? null,
+            phase: event.phase ?? "setup",
+            source: event.source ?? "groq",
+          });
+        } else if (event.type === "error") {
+          callbacks.onError(new Error(event.message ?? "Stream error"));
+        }
+      } catch {
+        // malformed event — skip
+      }
+    }
+  }
+}
+
 export async function fetchShadowingPhrases(
   level: "básico" | "intermedio" | "avanzado",
   count = 12,
