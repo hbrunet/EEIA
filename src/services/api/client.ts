@@ -199,62 +199,92 @@ export async function streamTutorMessage(
   callbacks: StreamTutorCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetch(`${env.apiBaseUrl}/tutor/message/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, learnerProfile }),
-      signal,
-    });
-  } catch (error) {
-    throw buildNetworkError("Stream request", error);
-  }
+  // React Native / Hermes does not support response.body ReadableStream,
+  // so we use XMLHttpRequest with onprogress which works reliably on both
+  // iOS and Android for SSE-style streaming.
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${env.apiBaseUrl}/tutor/message/stream`);
+    xhr.setRequestHeader("Content-Type", "application/json");
 
-  if (!response.ok) {
-    throw new Error(`Stream request failed with status ${response.status}`);
-  }
+    let processedLength = 0;
+    let sseBuffer = "";
+    let settled = false;
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Streaming not supported by this environment");
+    function processBuffer() {
+      const blocks = sseBuffer.split("\n\n");
+      sseBuffer = blocks.pop() ?? "";
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // Process complete SSE blocks (separated by \n\n)
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? "";
-
-    for (const block of blocks) {
-      const dataLine = block.split("\n").find((l) => l.startsWith("data: "));
-      if (!dataLine) continue;
-      try {
-        const event = JSON.parse(dataLine.slice(6));
-        if (event.type === "chunk") {
-          callbacks.onChunk(String(event.text ?? ""));
-        } else if (event.type === "done") {
-          callbacks.onDone({
-            suggestedGoal: event.suggestedGoal ?? "",
-            correction: event.correction ?? null,
-            pronunciationHint: event.pronunciationHint ?? null,
-            capturedLevel: event.capturedLevel ?? null,
-            capturedName: event.capturedName ?? null,
-            phase: event.phase ?? "setup",
-            source: event.source ?? "groq",
-          });
-        } else if (event.type === "error") {
-          callbacks.onError(new Error(event.message ?? "Stream error"));
+      for (const block of blocks) {
+        const dataLine = block.split("\n").find((l) => l.startsWith("data: "));
+        if (!dataLine) continue;
+        try {
+          const event = JSON.parse(dataLine.slice(6));
+          if (event.type === "chunk") {
+            callbacks.onChunk(String(event.text ?? ""));
+          } else if (event.type === "done") {
+            callbacks.onDone({
+              suggestedGoal: event.suggestedGoal ?? "",
+              correction: event.correction ?? null,
+              pronunciationHint: event.pronunciationHint ?? null,
+              capturedLevel: event.capturedLevel ?? null,
+              capturedName: event.capturedName ?? null,
+              phase: event.phase ?? "setup",
+              source: event.source ?? "groq",
+            });
+          } else if (event.type === "error") {
+            callbacks.onError(new Error(event.message ?? "Stream error"));
+          }
+        } catch {
+          // malformed event — skip
         }
-      } catch {
-        // malformed event — skip
       }
     }
-  }
+
+    xhr.onprogress = () => {
+      const newData = xhr.responseText.slice(processedLength);
+      processedLength = xhr.responseText.length;
+      sseBuffer += newData;
+      processBuffer();
+    };
+
+    xhr.onload = () => {
+      // Flush any remaining data that arrived after the last onprogress
+      const remaining = xhr.responseText.slice(processedLength);
+      if (remaining) {
+        sseBuffer += remaining;
+        processBuffer();
+      }
+      if (!settled) { settled = true; resolve(); }
+    };
+
+    xhr.onerror = () => {
+      if (!settled) {
+        settled = true;
+        reject(buildNetworkError("Stream request", new Error("XMLHttpRequest network error")));
+      }
+    };
+
+    xhr.ontimeout = () => {
+      if (!settled) {
+        settled = true;
+        reject(new Error("Stream request timed out"));
+      }
+    };
+
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        xhr.abort();
+        if (!settled) { settled = true; resolve(); }
+      });
+    }
+
+    try {
+      xhr.send(JSON.stringify({ message, history, learnerProfile }));
+    } catch (err) {
+      reject(buildNetworkError("Stream request", err));
+    }
+  });
 }
 
 export async function fetchShadowingPhrases(
