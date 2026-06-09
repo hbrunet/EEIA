@@ -17,7 +17,7 @@ import { LookupPanel } from "./chat/LookupPanel";
 import { TopicSuggestCard } from "./chat/TopicSuggestCard";
 import { WelcomeCard } from "./chat/WelcomeCard";
 
-const CONTEXT_WINDOW = 8;
+const CONTEXT_WINDOW = 20;
 const SESSION_CHECKPOINT_TURNS = 3;
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
 const CHAT_DRAFT_KEY = "eeia.chat.draft.v1";

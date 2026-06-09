@@ -16,7 +16,7 @@ const apiKey =
   rawApiKey !== "your_groq_api_key"
     ? rawApiKey
     : null;
-const contextWindow = Number(process.env.CHAT_CONTEXT_WINDOW || 8);
+const contextWindow = Number(process.env.CHAT_CONTEXT_WINDOW || 20);
 
 const groq = apiKey ? new Groq({ apiKey }) : null;
 const AUDIO_TMP_DIR = "/tmp/eeia-audio/";
