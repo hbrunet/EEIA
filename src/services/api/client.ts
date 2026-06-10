@@ -1,5 +1,5 @@
 import { env } from "../../config/env";
-import { TopicSuggestion } from "../../types/progress";
+import { Exercise, TopicSuggestion } from "../../types/progress";
 
 export type TutorChatMessage = {
   role: "user" | "assistant";
@@ -330,6 +330,23 @@ export async function fetchTopicSuggestions(
   payload: TopicSuggestionsPayload,
 ): Promise<TopicSuggestionsResponse> {
   return apiRequest<TopicSuggestionsResponse>("/tutor/topic-suggestions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export type FetchExercisesPayload = {
+  level: string;
+  focusArea: string;
+  objective?: string;
+  weaknesses?: string[];
+  count?: number;
+};
+
+export async function fetchExercises(
+  payload: FetchExercisesPayload,
+): Promise<{ exercises: Exercise[]; source: "groq" | "fallback" }> {
+  return apiRequest<{ exercises: Exercise[]; source: "groq" | "fallback" }>("/tutor/exercises", {
     method: "POST",
     body: JSON.stringify(payload),
   });

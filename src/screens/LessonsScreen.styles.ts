@@ -169,4 +169,138 @@ export const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 15,
   },
+
+  // ── Exercise runner ────────────────────────────────────────
+  exerciseStartBtn: {
+    backgroundColor: theme.colors.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  exerciseCounter: {
+    fontSize: 12,
+    color: theme.colors.muted,
+    marginBottom: 6,
+  },
+  exerciseQuestion: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: theme.colors.text,
+    marginBottom: 14,
+    lineHeight: 22,
+  },
+  exerciseHint: {
+    fontSize: 13,
+    color: theme.colors.muted,
+    fontStyle: "italic",
+    marginBottom: 8,
+  },
+  optionBtn: {
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+    backgroundColor: theme.colors.panel,
+  },
+  optionBtnSelected: {
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.accent + "18",
+  },
+  optionBtnCorrect: {
+    borderColor: "#22c55e",
+    backgroundColor: "#dcfce7",
+  },
+  optionBtnWrong: {
+    borderColor: "#ef4444",
+    backgroundColor: "#fee2e2",
+  },
+  optionBtnText: {
+    fontSize: 14,
+    color: theme.colors.text,
+  },
+  fillInput: {
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    color: theme.colors.text,
+    backgroundColor: theme.colors.panel,
+    marginBottom: 10,
+  },
+  submitBtn: {
+    backgroundColor: theme.colors.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  feedbackBox: {
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  feedbackCorrect: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#22c55e",
+    borderWidth: 1,
+  },
+  feedbackWrong: {
+    backgroundColor: "#fee2e2",
+    borderColor: "#ef4444",
+    borderWidth: 1,
+  },
+  feedbackText: {
+    fontWeight: "700",
+    fontSize: 14,
+    color: theme.colors.text,
+    marginBottom: 4,
+  },
+  feedbackExplanation: {
+    fontSize: 13,
+    color: theme.colors.text,
+    lineHeight: 18,
+  },
+  nextBtn: {
+    backgroundColor: theme.colors.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  scoreCard: {
+    alignItems: "center",
+    paddingVertical: 24,
+  },
+  scoreTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: theme.colors.text,
+    marginBottom: 8,
+  },
+  scoreValue: {
+    fontSize: 40,
+    fontWeight: "800",
+    color: theme.colors.accent,
+    marginBottom: 6,
+  },
+  scoreSubtitle: {
+    fontSize: 14,
+    color: theme.colors.muted,
+  },
+  loadingText: {
+    textAlign: "center",
+    marginTop: 8,
+    fontSize: 13,
+    color: theme.colors.muted,
+  },
+  errorText: {
+    color: "#ef4444",
+    fontSize: 13,
+    marginBottom: 8,
+  },
 });

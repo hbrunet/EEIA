@@ -1,6 +1,24 @@
 export type SkillArea = "grammar" | "listening" | "fluency" | "pronunciation" | "vocabulary";
 export type EnglishLevel = "A1" | "A2" | "B1" | "B2" | "C1";
 
+export type MultipleChoiceExercise = {
+  type: "multiple_choice";
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+};
+
+export type FillBlankExercise = {
+  type: "fill_blank";
+  sentence: string;
+  correctAnswer: string;
+  hint?: string;
+  explanation: string;
+};
+
+export type Exercise = MultipleChoiceExercise | FillBlankExercise;
+
 /** A pedagogically-oriented topic suggestion with a concrete grammar/skill focus. */
 export type TopicSuggestion = {
   text: string;

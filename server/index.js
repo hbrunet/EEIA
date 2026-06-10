@@ -1270,6 +1270,119 @@ app.post("/tutor/topic-suggestions", async (req, res) => {
   }
 });
 
+// ─── Structured exercises ─────────────────────────────────────────────────────
+
+const EXERCISES_FALLBACK = {
+  A1: [
+    { type: "multiple_choice", question: "Which sentence is correct?", options: ["She have a cat.", "She has a cat.", "She haves a cat.", "She is have a cat."], correctIndex: 1, explanation: "Con 'she/he/it' el verbo 'have' se convierte en 'has' en presente simple." },
+    { type: "multiple_choice", question: "Complete: 'I ___ a student.'", options: ["am", "is", "are", "be"], correctIndex: 0, explanation: "Con 'I' siempre usamos 'am' del verbo 'to be'." },
+    { type: "fill_blank", sentence: "They ___ from Argentina.", correctAnswer: "are", hint: "verbo 'to be' con 'they'", explanation: "Con 'they/we/you' usamos 'are'." },
+    { type: "multiple_choice", question: "What is the plural of 'child'?", options: ["childs", "childen", "children", "child"], correctIndex: 2, explanation: "'Children' es el plural irregular de 'child'." },
+    { type: "fill_blank", sentence: "She ___ to school every day.", correctAnswer: "goes", hint: "presente simple, 3ª persona singular de 'go'", explanation: "Con he/she/it, los verbos en presente simple agregan -s o -es." },
+  ],
+  A2: [
+    { type: "multiple_choice", question: "Choose the correct past tense: 'Yesterday I ___ to the market.'", options: ["go", "goes", "went", "gone"], correctIndex: 2, explanation: "'Went' es el pasado irregular de 'go'." },
+    { type: "fill_blank", sentence: "She ___ (not watch) TV last night.", correctAnswer: "didn't watch", hint: "negación en pasado simple", explanation: "En pasado negativo usamos 'didn't' + infinitivo sin to." },
+    { type: "multiple_choice", question: "Which is correct?", options: ["I am going to call you tomorrow.", "I going to call you tomorrow.", "I will to call you tomorrow.", "I go call you tomorrow."], correctIndex: 0, explanation: "'Be going to' expresa planes futuros. Estructura: am/is/are + going to + infinitivo." },
+    { type: "fill_blank", sentence: "___ you like coffee? Yes, I ___.", correctAnswer: "Do / do", hint: "pregunta y respuesta corta en presente simple", explanation: "Las preguntas en presente simple usan 'do/does'. La respuesta corta repite el auxiliar." },
+    { type: "multiple_choice", question: "Find the error: 'Can you helps me?'", options: ["Can", "you", "helps", "me"], correctIndex: 2, explanation: "Después de verbos modales (can, will, must…) el verbo siempre va en infinitivo sin cambios: 'Can you help me?'" },
+  ],
+  B1: [
+    { type: "multiple_choice", question: "Choose the correct option: 'I ___ in this city for five years.'", options: ["live", "lived", "have lived", "am living"], correctIndex: 2, explanation: "Se usa Present Perfect con 'for' para indicar una acción que comenzó en el pasado y continúa ahora." },
+    { type: "fill_blank", sentence: "If I ___ (have) more time, I would travel more.", correctAnswer: "had", hint: "2nd conditional", explanation: "En el 2nd conditional, la cláusula 'if' usa pasado simple aunque se refiera al presente/futuro hipotético." },
+    { type: "multiple_choice", question: "The report ___ by the manager yesterday.", options: ["wrote", "was written", "is written", "has written"], correctIndex: 1, explanation: "Voz pasiva en pasado: was/were + participio pasado." },
+    { type: "fill_blank", sentence: "She asked me where I ___ from.", correctAnswer: "was", hint: "reported speech, backshift de 'am'", explanation: "En reported speech, el presente 'am' cambia a pasado 'was'." },
+    { type: "multiple_choice", question: "Which sentence uses 'yet' correctly?", options: ["I have yet finished.", "Have you finished yet?", "Yet I finished it.", "I finished it yet."], correctIndex: 1, explanation: "'Yet' se usa en preguntas y negaciones con Present Perfect, siempre al final de la oración." },
+  ],
+};
+
+app.post("/tutor/exercises", async (req, res) => {
+  try {
+    const level = String(req.body?.level || "A2").trim().toUpperCase();
+    const focusArea = String(req.body?.focusArea || "grammar").trim();
+    const objective = String(req.body?.objective || "").trim();
+    const weaknesses = Array.isArray(req.body?.weaknesses)
+      ? req.body.weaknesses.map((w) => String(w)).filter(Boolean).slice(0, 3)
+      : [];
+    const count = Math.min(Math.max(Number(req.body?.count) || 5, 3), 8);
+
+    const fallbackKey = ["A1", "A2", "B1"].includes(level) ? level : "A2";
+    const fallback = EXERCISES_FALLBACK[fallbackKey].slice(0, count);
+
+    if (!groq) return res.json({ exercises: fallback, source: "fallback" });
+
+    const cefrGuidance = {
+      A1: "absolute beginner. Use only 'to be', 'have', present simple, basic vocabulary. Sentences max 6 words.",
+      A2: "basic learner. Use present simple, past simple, 'going to', 'can/could', basic comparatives.",
+      B1: "intermediate. Use present perfect, 1st and 2nd conditional, passive voice, reported speech.",
+      B2: "upper intermediate. Use 3rd conditional, mixed conditionals, advanced passive, complex reported speech, collocations.",
+      C1: "advanced. Use nuanced register, nominalisation, complex clause structures, advanced idioms.",
+    };
+
+    const systemPrompt =
+      "You are an English grammar exercise generator for Spanish-speaking learners. " +
+      "Generate interactive exercises that target specific grammar structures. " +
+      "All explanations must be written in SPANISH and be concise (1-2 sentences). " +
+      "For fill_blank exercises, the 'sentence' must contain exactly one '___' placeholder. " +
+      "For multiple_choice, provide exactly 4 options with only one correct answer. " +
+      "Make distractors plausible — common mistakes Spanish speakers make. " +
+      "Respond ONLY as JSON with key: exercises (array of objects).";
+
+    const userPrompt =
+      `Student level: ${level} — ${cefrGuidance[level] || cefrGuidance["A2"]}\n` +
+      `Focus area: ${focusArea}\n` +
+      (objective ? `Lesson objective: "${objective}"\n` : "") +
+      (weaknesses.length > 0 ? `Known weaknesses: ${weaknesses.join(", ")}\n` : "") +
+      `\nGenerate exactly ${count} exercises. Mix types:\n` +
+      `- ${Math.ceil(count * 0.6)} multiple_choice exercises (schema: { type, question, options: string[4], correctIndex: number, explanation: string })\n` +
+      `- ${Math.floor(count * 0.4)} fill_blank exercises (schema: { type, sentence: string with '___', correctAnswer: string, hint: string, explanation: string })\n` +
+      `Each exercise must target a DIFFERENT grammar structure. Vary difficulty slightly within the level.`;
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: 0.6,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+
+      const raw = completion.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { return res.json({ exercises: fallback, source: "fallback" }); }
+
+      const exercises = Array.isArray(parsed.exercises)
+        ? parsed.exercises.filter((ex) => {
+            if (ex.type === "multiple_choice") {
+              return typeof ex.question === "string" &&
+                Array.isArray(ex.options) && ex.options.length === 4 &&
+                typeof ex.correctIndex === "number" &&
+                typeof ex.explanation === "string";
+            }
+            if (ex.type === "fill_blank") {
+              return typeof ex.sentence === "string" &&
+                ex.sentence.includes("___") &&
+                typeof ex.correctAnswer === "string" &&
+                typeof ex.explanation === "string";
+            }
+            return false;
+          }).slice(0, count)
+        : [];
+
+      if (exercises.length < 2) return res.json({ exercises: fallback, source: "fallback" });
+      return res.json({ exercises, source: "groq" });
+    } catch (groqErr) {
+      console.error("Exercises generation failed, using fallback", groqErr);
+      return res.json({ exercises: fallback, source: "fallback" });
+    }
+  } catch (error) {
+    console.error("Exercises endpoint error", error);
+    return res.status(500).json({ error: "exercises_failed" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Tutor API running on http://localhost:${port}`);
   console.log(`Provider: Groq | Model: ${model} | API key loaded: ${Boolean(apiKey)}`);
