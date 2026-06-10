@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { HomeScreen } from "../screens/HomeScreen";
 import { ChatScreen } from "../screens/ChatScreen";
+import { LessonsScreen } from "../screens/LessonsScreen";
 import { ProgressScreen } from "../screens/ProgressScreen";
 import { AccentsScreen } from "../screens/AccentsScreen";
 import { ProfileScreen } from "../screens/ProfileScreen";
@@ -18,6 +19,7 @@ type IoniconsName = React.ComponentProps<typeof Ionicons>["name"];
 const TAB_ICONS: Record<string, { active: IoniconsName; inactive: IoniconsName }> = {
   Home:     { active: "home",           inactive: "home-outline" },
   Chat:     { active: "chatbubble",     inactive: "chatbubble-outline" },
+  Lessons:  { active: "book",           inactive: "book-outline" },
   Progress: { active: "bar-chart",      inactive: "bar-chart-outline" },
   Accents:  { active: "mic",            inactive: "mic-outline" },
   Profile:  { active: "person",         inactive: "person-outline" },
@@ -26,6 +28,7 @@ const TAB_ICONS: Record<string, { active: IoniconsName; inactive: IoniconsName }
 const TAB_LABELS: Record<string, string> = {
   Home:     "Inicio",
   Chat:     "Chat",
+  Lessons:  "Lecciones",
   Progress: "Progreso",
   Accents:  "Pronunciación",
   Profile:  "Perfil",
@@ -117,6 +120,7 @@ export function MainTabs() {
       >
         <Tab.Screen name="Home" component={HomeScreen} options={{ title: "Inicio" }} />
         <Tab.Screen name="Chat" component={ChatScreen} options={{ title: "Chat con tutor" }} />
+        <Tab.Screen name="Lessons" component={LessonsScreen} options={{ title: "Lección del día" }} />
         <Tab.Screen name="Progress" component={ProgressScreen} options={{ title: "Mi progreso" }} />
         <Tab.Screen name="Accents" component={AccentsScreen} options={{ title: "Entrenamiento" }} />
         <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: "Tu perfil" }} />
