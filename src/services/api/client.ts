@@ -341,6 +341,7 @@ export type FetchExercisesPayload = {
   objective?: string;
   weaknesses?: string[];
   count?: number;
+  recentTopics?: string[];
 };
 
 export async function fetchExercises(

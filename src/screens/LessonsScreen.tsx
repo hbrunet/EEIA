@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { fetchExercises } from "../services/api/client";
 import { Exercise } from "../types/progress";
@@ -14,6 +15,9 @@ const SKILL_LABELS: Record<string, string> = {
 };
 
 type ExercisePhase = "idle" | "loading" | "running" | "done";
+
+const RECENT_TOPICS_KEY = "exercises_recent_topics";
+const MAX_RECENT_TOPICS = 20;
 
 export function LessonsScreen() {
   const { progress, completeSession } = useAppState();
@@ -43,12 +47,15 @@ export function LessonsScreen() {
     setExercisePhase("loading");
     setExerciseError(null);
     try {
+      const storedRaw = await AsyncStorage.getItem(RECENT_TOPICS_KEY).catch(() => null);
+      const recentTopics: string[] = storedRaw ? JSON.parse(storedRaw) : [];
       const result = await fetchExercises({
         level: progress?.profile?.level ?? "A2",
         focusArea: lesson.focusArea,
         objective: lesson.objective,
         weaknesses: progress?.weaknesses?.slice(0, 3).map((w) => w.detail) ?? [],
         count: 5,
+        recentTopics,
       });
       setExercises(result.exercises);
       setExerciseIdx(0);
@@ -94,6 +101,18 @@ export function LessonsScreen() {
       const score = exerciseResults.filter(Boolean).length;
       const total = exerciseResults.length;
       const pct = total > 0 ? score / total : 0;
+
+      // Persist topics covered in this session to avoid repeats next time
+      const newTopics = exercises
+        .map((ex) => ex.topic)
+        .filter((t): t is string => Boolean(t));
+      if (newTopics.length > 0) {
+        const storedRaw = await AsyncStorage.getItem(RECENT_TOPICS_KEY).catch(() => null);
+        const existing: string[] = storedRaw ? JSON.parse(storedRaw) : [];
+        const merged = [...newTopics, ...existing.filter((t) => !newTopics.includes(t))].slice(0, MAX_RECENT_TOPICS);
+        AsyncStorage.setItem(RECENT_TOPICS_KEY, JSON.stringify(merged)).catch(() => {});
+      }
+
       await completeSession({
         grammarDelta: Math.max(1, Math.round(pct * 5)),
         fluencyDelta: 1,

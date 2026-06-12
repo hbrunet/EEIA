@@ -7,6 +7,7 @@ export type MultipleChoiceExercise = {
   options: string[];
   correctIndex: number;
   explanation: string;
+  topic?: string;
 };
 
 export type FillBlankExercise = {
@@ -15,6 +16,7 @@ export type FillBlankExercise = {
   correctAnswer: string;
   hint?: string;
   explanation: string;
+  topic?: string;
 };
 
 export type Exercise = MultipleChoiceExercise | FillBlankExercise;

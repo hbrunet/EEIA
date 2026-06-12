@@ -1276,22 +1276,22 @@ const EXERCISES_FALLBACK = {
   A1: [
     { type: "multiple_choice", question: "Which sentence is correct?", options: ["She have a cat.", "She has a cat.", "She haves a cat.", "She is have a cat."], correctIndex: 1, explanation: "Con 'she/he/it' el verbo 'have' se convierte en 'has' en presente simple." },
     { type: "multiple_choice", question: "Complete: 'I ___ a student.'", options: ["am", "is", "are", "be"], correctIndex: 0, explanation: "Con 'I' siempre usamos 'am' del verbo 'to be'." },
-    { type: "fill_blank", sentence: "They ___ from Argentina.", correctAnswer: "are", hint: "verbo 'to be' con 'they'", explanation: "Con 'they/we/you' usamos 'are'." },
+    { type: "fill_blank", sentence: "They ___ from Argentina.", correctAnswer: "are", hint: "verb 'to be' with 'they'", explanation: "Con 'they/we/you' usamos 'are'." },
     { type: "multiple_choice", question: "What is the plural of 'child'?", options: ["childs", "childen", "children", "child"], correctIndex: 2, explanation: "'Children' es el plural irregular de 'child'." },
-    { type: "fill_blank", sentence: "She ___ to school every day.", correctAnswer: "goes", hint: "presente simple, 3ª persona singular de 'go'", explanation: "Con he/she/it, los verbos en presente simple agregan -s o -es." },
+    { type: "fill_blank", sentence: "She ___ to school every day.", correctAnswer: "goes", hint: "present simple, 3rd person singular of 'go'", explanation: "Con he/she/it, los verbos en presente simple agregan -s o -es." },
   ],
   A2: [
     { type: "multiple_choice", question: "Choose the correct past tense: 'Yesterday I ___ to the market.'", options: ["go", "goes", "went", "gone"], correctIndex: 2, explanation: "'Went' es el pasado irregular de 'go'." },
-    { type: "fill_blank", sentence: "She ___ (not watch) TV last night.", correctAnswer: "didn't watch", hint: "negación en pasado simple", explanation: "En pasado negativo usamos 'didn't' + infinitivo sin to." },
-    { type: "multiple_choice", question: "Which is correct?", options: ["I am going to call you tomorrow.", "I going to call you tomorrow.", "I will to call you tomorrow.", "I go call you tomorrow."], correctIndex: 0, explanation: "'Be going to' expresa planes futuros. Estructura: am/is/are + going to + infinitivo." },
-    { type: "fill_blank", sentence: "___ you like coffee? Yes, I ___.", correctAnswer: "Do / do", hint: "pregunta y respuesta corta en presente simple", explanation: "Las preguntas en presente simple usan 'do/does'. La respuesta corta repite el auxiliar." },
+    { type: "fill_blank", sentence: "She ___ TV last night. (negative)", correctAnswer: "didn't watch", hint: "past simple negative: didn't + base verb", explanation: "En pasado negativo usamos 'didn't' + infinitivo sin 'to'." },
+    { type: "multiple_choice", question: "Which sentence is correct?", options: ["I am going to call you tomorrow.", "I going to call you tomorrow.", "I will to call you tomorrow.", "I go call you tomorrow."], correctIndex: 0, explanation: "'Be going to' expresa planes futuros. Estructura: am/is/are + going to + infinitivo." },
+    { type: "fill_blank", sentence: "___ you like coffee? Yes, I ___.", correctAnswer: "Do / do", hint: "present simple question and short answer", explanation: "Las preguntas en presente simple usan 'do/does'. La respuesta corta repite el auxiliar." },
     { type: "multiple_choice", question: "Find the error: 'Can you helps me?'", options: ["Can", "you", "helps", "me"], correctIndex: 2, explanation: "Después de verbos modales (can, will, must…) el verbo siempre va en infinitivo sin cambios: 'Can you help me?'" },
   ],
   B1: [
     { type: "multiple_choice", question: "Choose the correct option: 'I ___ in this city for five years.'", options: ["live", "lived", "have lived", "am living"], correctIndex: 2, explanation: "Se usa Present Perfect con 'for' para indicar una acción que comenzó en el pasado y continúa ahora." },
-    { type: "fill_blank", sentence: "If I ___ (have) more time, I would travel more.", correctAnswer: "had", hint: "2nd conditional", explanation: "En el 2nd conditional, la cláusula 'if' usa pasado simple aunque se refiera al presente/futuro hipotético." },
+    { type: "fill_blank", sentence: "If I ___ more time, I would travel more.", correctAnswer: "had", hint: "2nd conditional — 'if' clause uses past simple", explanation: "En el 2nd conditional, la cláusula 'if' usa pasado simple aunque se refiera al presente/futuro hipotético." },
     { type: "multiple_choice", question: "The report ___ by the manager yesterday.", options: ["wrote", "was written", "is written", "has written"], correctIndex: 1, explanation: "Voz pasiva en pasado: was/were + participio pasado." },
-    { type: "fill_blank", sentence: "She asked me where I ___ from.", correctAnswer: "was", hint: "reported speech, backshift de 'am'", explanation: "En reported speech, el presente 'am' cambia a pasado 'was'." },
+    { type: "fill_blank", sentence: "She asked me where I ___ from.", correctAnswer: "was", hint: "reported speech — backshift of 'am' → 'was'", explanation: "En reported speech, el presente 'am' cambia a pasado 'was'." },
     { type: "multiple_choice", question: "Which sentence uses 'yet' correctly?", options: ["I have yet finished.", "Have you finished yet?", "Yet I finished it.", "I finished it yet."], correctIndex: 1, explanation: "'Yet' se usa en preguntas y negaciones con Present Perfect, siempre al final de la oración." },
   ],
 };
@@ -1305,6 +1305,9 @@ app.post("/tutor/exercises", async (req, res) => {
       ? req.body.weaknesses.map((w) => String(w)).filter(Boolean).slice(0, 3)
       : [];
     const count = Math.min(Math.max(Number(req.body?.count) || 5, 3), 8);
+    const recentTopics = Array.isArray(req.body?.recentTopics)
+      ? req.body.recentTopics.map((t) => String(t)).filter(Boolean).slice(0, 20)
+      : [];
 
     const fallbackKey = ["A1", "A2", "B1"].includes(level) ? level : "A2";
     const fallback = EXERCISES_FALLBACK[fallbackKey].slice(0, count);
@@ -1312,31 +1315,72 @@ app.post("/tutor/exercises", async (req, res) => {
     if (!groq) return res.json({ exercises: fallback, source: "fallback" });
 
     const cefrGuidance = {
-      A1: "absolute beginner. Use only 'to be', 'have', present simple, basic vocabulary. Sentences max 6 words.",
-      A2: "basic learner. Use present simple, past simple, 'going to', 'can/could', basic comparatives.",
-      B1: "intermediate. Use present perfect, 1st and 2nd conditional, passive voice, reported speech.",
-      B2: "upper intermediate. Use 3rd conditional, mixed conditionals, advanced passive, complex reported speech, collocations.",
-      C1: "advanced. Use nuanced register, nominalisation, complex clause structures, advanced idioms.",
+      A1: {
+        description: "absolute beginner",
+        tenses: ["present simple (to be, have, common verbs)", "present simple questions and negatives (do/does)", "imperatives"],
+        forbidden: ["past simple", "present perfect", "future forms", "conditionals", "passive voice"],
+        vocab: "basic everyday vocabulary only, max 6-7 words per sentence",
+      },
+      A2: {
+        description: "elementary",
+        tenses: ["present simple", "past simple (regular and common irregulars)", "present continuous", "'going to' for future plans", "can / could for ability"],
+        forbidden: ["present perfect", "past perfect", "conditionals", "passive voice", "reported speech"],
+        vocab: "simple everyday contexts, max 10 words per sentence",
+      },
+      B1: {
+        description: "intermediate",
+        tenses: ["present perfect (with for/since/ever/never/just/already/yet)", "past continuous", "past simple vs present perfect contrast", "1st conditional (if + present simple, will)", "2nd conditional (if + past simple, would)", "passive voice (present and past simple)", "reported speech (basic backshift)"],
+        forbidden: ["3rd conditional", "mixed conditionals", "past perfect continuous", "advanced passive forms"],
+        vocab: "familiar topics, moderate sentence complexity",
+      },
+      B2: {
+        description: "upper intermediate",
+        tenses: ["past perfect (had + past participle)", "future perfect and future continuous", "3rd conditional (if + past perfect, would have)", "mixed conditionals", "passive voice (all tenses)", "reported speech (full backshift, all reporting verbs)", "wish / if only (unreal situations)"],
+        forbidden: ["C1 nominalisation", "highly formal register"],
+        vocab: "varied topics, complex sentences allowed",
+      },
+      C1: {
+        description: "advanced",
+        tenses: ["all tenses with nuanced use", "inversion for emphasis (Never had I…)", "cleft sentences (It was…that)", "subjunctive (It is essential that he be…)", "advanced passive (have/get something done)", "complex reported speech with modals", "perfect infinitives and gerunds"],
+        forbidden: [],
+        vocab: "abstract topics, idiomatic language, nominalisation",
+      },
     };
+
+    const levelData = cefrGuidance[level] || cefrGuidance["A2"];
+    const tensesAllowed = levelData.tenses.join("; ");
+    const tensesForbidden = levelData.forbidden.length > 0
+      ? `STRICTLY FORBIDDEN tenses/structures for this level: ${levelData.forbidden.join(", ")}.`
+      : "";
 
     const systemPrompt =
       "You are an English grammar exercise generator for Spanish-speaking learners. " +
-      "Generate interactive exercises that target specific grammar structures. " +
-      "All explanations must be written in SPANISH and be concise (1-2 sentences). " +
-      "For fill_blank exercises, the 'sentence' must contain exactly one '___' placeholder. " +
-      "For multiple_choice, provide exactly 4 options with only one correct answer. " +
-      "Make distractors plausible — common mistakes Spanish speakers make. " +
+      "ALL exercise content (questions, sentences, options, answers, hints) MUST be written entirely in ENGLISH. " +
+      "The exercises focus on understanding and producing English sentences with correct verb tenses. " +
+      "Only the 'explanation' field must be written in SPANISH (1-2 concise sentences explaining the grammar rule). " +
+      "For fill_blank exercises, the 'sentence' must be an English sentence with exactly one '___' placeholder. " +
+      "For multiple_choice, the 'question' and all 4 'options' must be in English, with only one correct answer. " +
+      "Make distractors plausible — reflect common mistakes Spanish speakers make in English. " +
+      "You MUST strictly respect the allowed tenses for the student's CEFR level. " +
+      "Each exercise must include a short 'topic' field (e.g. 'past simple negative', 'present perfect + for/since') identifying the grammar point targeted. " +
       "Respond ONLY as JSON with key: exercises (array of objects).";
 
     const userPrompt =
-      `Student level: ${level} — ${cefrGuidance[level] || cefrGuidance["A2"]}\n` +
+      `Student level: ${level} (${levelData.description})\n` +
+      `ALLOWED tenses and structures for this level: ${tensesAllowed}\n` +
+      (tensesForbidden ? `${tensesForbidden}\n` : "") +
+      `${levelData.vocab}\n` +
       `Focus area: ${focusArea}\n` +
       (objective ? `Lesson objective: "${objective}"\n` : "") +
       (weaknesses.length > 0 ? `Known weaknesses: ${weaknesses.join(", ")}\n` : "") +
-      `\nGenerate exactly ${count} exercises. Mix types:\n` +
+      `\nGenerate exactly ${count} exercises. Each must target a DIFFERENT tense or structure from the allowed list. Mix types:\n` +
       `- ${Math.ceil(count * 0.6)} multiple_choice exercises (schema: { type, question, options: string[4], correctIndex: number, explanation: string })\n` +
       `- ${Math.floor(count * 0.4)} fill_blank exercises (schema: { type, sentence: string with '___', correctAnswer: string, hint: string, explanation: string })\n` +
-      `Each exercise must target a DIFFERENT grammar structure. Vary difficulty slightly within the level.`;
+      `Cover as many different allowed tenses as possible across the ${count} exercises.\n` +
+      (recentTopics.length > 0
+        ? `RECENTLY PRACTICED topics (avoid repeating these): ${recentTopics.join(", ")}.\n`
+        : "") +
+      `REMINDER: questions, sentences, options, answers and hints must be in ENGLISH. Only explanations in Spanish.`;
 
     try {
       const completion = await groq.chat.completions.create({
