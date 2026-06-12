@@ -21,6 +21,16 @@ export type FillBlankExercise = {
 
 export type Exercise = MultipleChoiceExercise | FillBlankExercise;
 
+export type ExerciseSessionEntry = {
+  completedAt: string;
+  level: string;
+  focusArea: string;
+  score: number;
+  total: number;
+  topics: string[];
+  wrongTopics: string[];
+};
+
 /** A pedagogically-oriented topic suggestion with a concrete grammar/skill focus. */
 export type TopicSuggestion = {
   text: string;
@@ -130,4 +140,6 @@ export type AppProgress = {
   nextClassGoal: string;
   diagnosticCompleted: boolean;
   lastUpdatedAt: string;
+  exerciseWeaknesses?: Weakness[];
+  exerciseSessionHistory?: ExerciseSessionEntry[];
 };

@@ -20,7 +20,7 @@ const RECENT_TOPICS_KEY = "exercises_recent_topics";
 const MAX_RECENT_TOPICS = 20;
 
 export function LessonsScreen() {
-  const { progress, completeSession } = useAppState();
+  const { progress, recordExerciseResults } = useAppState();
   const lesson = progress?.currentLesson;
 
   const [completed, setCompleted] = useState(false);
@@ -98,10 +98,6 @@ export function LessonsScreen() {
     if (!lesson || saving) return;
     setSaving(true);
     try {
-      const score = exerciseResults.filter(Boolean).length;
-      const total = exerciseResults.length;
-      const pct = total > 0 ? score / total : 0;
-
       // Persist topics covered in this session to avoid repeats next time
       const newTopics = exercises
         .map((ex) => ex.topic)
@@ -113,15 +109,20 @@ export function LessonsScreen() {
         AsyncStorage.setItem(RECENT_TOPICS_KEY, JSON.stringify(merged)).catch(() => {});
       }
 
-      await completeSession({
-        grammarDelta: Math.max(1, Math.round(pct * 5)),
-        fluencyDelta: 1,
-        pronunciationDelta: 1,
-        listeningDelta: 1,
-        notes: `Ejercicios: ${score}/${total} correctos`,
+      await recordExerciseResults({
+        exercises,
+        results: exerciseResults,
+        focusArea: lesson.focusArea,
+        level: progress?.profile?.level ?? "A2",
       });
+
+      const score = exerciseResults.filter(Boolean).length;
+      const total = exerciseResults.length;
       setCompleted(true);
-      Alert.alert("¡Sesión completada!", `Obtuviste ${score}/${total} en los ejercicios. ¡Buen trabajo!`);
+      Alert.alert(
+        "¡Sesión completada!",
+        `Obtuviste ${score}/${total} en los ejercicios. ¡Buen trabajo!`,
+      );
     } finally {
       setSaving(false);
     }

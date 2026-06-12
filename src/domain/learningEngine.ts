@@ -33,9 +33,22 @@ export function inferWeaknesses(progress: AppProgress): Weakness[] {
     severity: 3 as Weakness["severity"],
   }));
 
-  return [...computed, ...custom]
+  // Exercise-specific grammar weaknesses (most precise signal — listed first)
+  const exerciseSpecific = progress.exerciseWeaknesses || [];
+
+  // Merge: de-dup by detail, keeping highest severity
+  const seen = new Map<string, Weakness>();
+  for (const w of [...exerciseSpecific, ...computed, ...custom]) {
+    const key = w.detail.toLowerCase();
+    const existing = seen.get(key);
+    if (!existing || w.severity > existing.severity) {
+      seen.set(key, w);
+    }
+  }
+
+  return Array.from(seen.values())
     .sort((a, b) => b.severity - a.severity)
-    .slice(0, 6);
+    .slice(0, 8);
 }
 
 function chooseFocusArea(weaknesses: Weakness[]): SkillArea {

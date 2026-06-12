@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { applyGoalUpdate, applySessionResult, runDiagnostic } from "../domain/learningEngine";
 import { loadProgress, resetProgressStorage, saveProgress } from "../storage/progressStore";
-import { AppProgress, EnglishLevel, SessionResult } from "../types/progress";
+import { AppProgress, EnglishLevel, Exercise, ExerciseSessionEntry, SessionResult, SkillArea, Weakness } from "../types/progress";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -100,6 +100,12 @@ type AppContextValue = {
   setProfileNameFromChat: (name: string) => Promise<void>;
   updateGoal: (goal: string) => Promise<void>;
   completeSession: (result: SessionResult) => Promise<void>;
+  recordExerciseResults: (input: {
+    exercises: Exercise[];
+    results: boolean[];
+    focusArea: string;
+    level: string;
+  }) => Promise<void>;
   runInitialDiagnostic: () => Promise<void>;
   recordPronunciationPractice: (score: number) => Promise<void>;
   recordPronunciationWordAttempt: (word: string, score: number) => Promise<void>;
@@ -217,6 +223,92 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const latest = progressRef.current;
     if (!latest) return;
     const next = applySessionResult(ensureTodayGoal(latest), result);
+    await persist(next);
+  }
+
+  async function recordExerciseResults(input: {
+    exercises: Exercise[];
+    results: boolean[];
+    focusArea: string;
+    level: string;
+  }) {
+    const latest = progressRef.current;
+    if (!latest) return;
+    const safeProgress = ensureTodayGoal(latest);
+    const { exercises, results, focusArea, level } = input;
+
+    const score = results.filter(Boolean).length;
+    const total = results.length;
+    const pct = total > 0 ? score / total : 0;
+
+    // Update exerciseWeaknesses per topic
+    const exerciseWeaknesses = [...(safeProgress.exerciseWeaknesses || [])];
+    exercises.forEach((ex, i) => {
+      const topic = ex.topic;
+      if (!topic) return;
+      const isCorrect = results[i];
+      const idx = exerciseWeaknesses.findIndex(
+        (w) => w.detail.toLowerCase() === topic.toLowerCase(),
+      );
+      if (!isCorrect) {
+        if (idx >= 0) {
+          exerciseWeaknesses[idx] = {
+            ...exerciseWeaknesses[idx],
+            severity: Math.min(5, exerciseWeaknesses[idx].severity + 1) as Weakness["severity"],
+          };
+        } else {
+          exerciseWeaknesses.push({ area: "grammar" as SkillArea, detail: topic, severity: 2 });
+        }
+      } else if (idx >= 0) {
+        const next = exerciseWeaknesses[idx].severity - 1;
+        if (next <= 0) {
+          exerciseWeaknesses.splice(idx, 1);
+        } else {
+          exerciseWeaknesses[idx] = {
+            ...exerciseWeaknesses[idx],
+            severity: next as Weakness["severity"],
+          };
+        }
+      }
+    });
+    exerciseWeaknesses.sort((a, b) => b.severity - a.severity);
+
+    // Session entry
+    const topics = exercises.map((ex) => ex.topic).filter(Boolean) as string[];
+    const wrongTopics = exercises
+      .filter((_, i) => !results[i])
+      .map((ex) => ex.topic)
+      .filter(Boolean) as string[];
+    const entry: ExerciseSessionEntry = {
+      completedAt: new Date().toISOString(),
+      level,
+      focusArea,
+      score,
+      total,
+      topics,
+      wrongTopics,
+    };
+    const exerciseSessionHistory = [
+      entry,
+      ...(safeProgress.exerciseSessionHistory || []),
+    ].slice(0, 30);
+
+    // Apply session (handles metrics, sessionHistory, lesson rebuild)
+    const grammarDelta = pct >= 0.8 ? 0.5 : pct >= 0.6 ? 0.3 : pct >= 0.4 ? 0.1 : -0.1;
+    const sessionResult: SessionResult = {
+      grammarDelta: grammarDelta * 10, // scale to grammarAccuracy (0-100)
+      fluencyDelta: 0,
+      pronunciationDelta: 0,
+      notes: `Ejercicios: ${score}/${total} correctos — ${wrongTopics.join(", ") || "todos bien"}`,
+    };
+    const withSession = applySessionResult(safeProgress, sessionResult);
+
+    const next: AppProgress = {
+      ...withSession,
+      exerciseWeaknesses: exerciseWeaknesses.slice(0, 15),
+      exerciseSessionHistory,
+    };
+
     await persist(next);
   }
 
@@ -510,6 +602,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setProfileNameFromChat,
       updateGoal,
       completeSession,
+      recordExerciseResults,
       runInitialDiagnostic,
       recordPronunciationPractice,
       recordPronunciationWordAttempt,
