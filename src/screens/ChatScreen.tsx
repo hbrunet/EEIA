@@ -1,10 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
 import { buildSmartTopicSuggestions } from "../domain/chatTopicEngine";
-import { fetchTopicSuggestions, streamTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult } from "../services/api/client";
+import { fetchTopicSuggestions, lookupTutorTerm, streamTutorMessage, transcribeAudio, transcribeAndTranslate, TranscriptionLanguage, TranscriptionResult, TutorLookupResponse } from "../services/api/client";
 import { useAppState } from "../state/AppContext";
 import { TopicSuggestion } from "../types/progress";
 import { theme } from "../ui/theme";
@@ -12,6 +12,7 @@ import { styles } from "./ChatScreen.styles";
 import { ChatMessage, SpeechRate, SPEECH_RATE_VALUE } from "./chat/types";
 import { ChatBubble } from "./chat/ChatBubble";
 import { TypingIndicator } from "./chat/TypingIndicator";
+import { LookupPanel } from "../ui/LookupPanel";
 import { TopicSuggestCard } from "./chat/TopicSuggestCard";
 import { WelcomeCard } from "./chat/WelcomeCard";
 
@@ -46,7 +47,7 @@ function getFriendlyTranscriptionError(error: unknown): string {
 }
 
 export function ChatScreen() {
-  const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
+  const { updateGoal, progress, progressRef, recordChatTurnFeedback, recordChatSessionSummary, recordLookupTerm, clearLookupHistory, setProfileLevelFromChat, setProfileNameFromChat } = useAppState();
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -59,6 +60,11 @@ export function ChatScreen() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [selectedSuggestedTopic, setSelectedSuggestedTopic] = useState<string | null>(null);
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<TranscriptionLanguage>("en");
   const [translateMode, setTranslateMode] = useState(false); // ES→EN
   const [lastTranslationOriginal, setLastTranslationOriginal] = useState<string | null>(null);
@@ -120,6 +126,15 @@ export function ChatScreen() {
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileLevelConfigured]);
+  const recentLookups = progress?.lookupHistory || [];
+  const recentLookupWords = useMemo(
+    () => recentLookups.filter((item) => !item.trim().includes(" ")),
+    [recentLookups],
+  );
+  const recentLookupPhrases = useMemo(
+    () => recentLookups.filter((item) => item.trim().includes(" ")),
+    [recentLookups],
+  );
   const hasTypedMessage = message.trim().length > 0;
   const actionDisabled = loading || isTranscribing;
   const inputControlsDisabled = actionDisabled || recording !== null;
@@ -502,6 +517,55 @@ export function ChatScreen() {
     }
   }
 
+  async function onLookupPress() {
+    const term = lookupQuery.trim();
+    if (!term) return;
+    setLookupLoading(true);
+    setLookupError(null);
+    try {
+      const result = await lookupTutorTerm(term, progress?.profile.level);
+      setLookupResult(result);
+      await recordLookupTerm(term);
+    } catch (lookupIssue) {
+      setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function onAssistantWordPress(word: string) {
+    setLookupOpen(true);
+    setLookupQuery(word);
+    setLookupResult(null);
+    setLookupError(null);
+    setLookupLoading(true);
+    try {
+      const result = await lookupTutorTerm(word, progress?.profile.level);
+      setLookupResult(result);
+      await recordLookupTerm(word);
+    } catch (lookupIssue) {
+      setLookupError(lookupIssue instanceof Error ? lookupIssue.message : "No se pudo consultar el significado.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function onHistoryItemPress(term: string) {
+    setLookupQuery(term);
+    setLookupResult(null);
+    setLookupError(null);
+    setLookupLoading(true);
+    try {
+      const result = await lookupTutorTerm(term, progress?.profile.level);
+      setLookupResult(result);
+      await recordLookupTerm(term);
+    } catch (e) {
+      setLookupError(e instanceof Error ? e.message : "Error al consultar.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
   function onToggleCorrection(messageId: string) {
     setMessages((current) => current.map((item) => {
       if (item.id !== messageId || !item.correctionHint) return item;
@@ -581,7 +645,7 @@ export function ChatScreen() {
             onSpeak={onSpeakAssistantMessage}
             onChangeSpeechRate={onChangeSpeechRate}
             onToggleCorrection={onToggleCorrection}
-            onLookup={(term) => void recordLookupTerm(term)}
+            onWordPress={(word) => void onAssistantWordPress(word)}
           />
         ))}
         {pendingTopicSelection && phase === "setup" && (topicsLoading || suggestedTopics.length > 0) && (
@@ -608,6 +672,22 @@ export function ChatScreen() {
           </View>
         )}
       </ScrollView>
+
+      {lookupOpen && (
+        <LookupPanel
+          mode="panel"
+          recentLookups={recentLookups}
+          onClearHistory={() => { void clearLookupHistory(); setLookupResult(null); setLookupError(null); }}
+          onClose={() => { setLookupOpen(false); setLookupError(null); }}
+          lookupQuery={lookupQuery}
+          onQueryChange={setLookupQuery}
+          onSearch={() => { if (lookupQuery.trim()) void onLookupPress(); }}
+          lookupLoading={lookupLoading}
+          lookupError={lookupError}
+          lookupResult={lookupResult}
+          onHistoryItemPress={(term) => void onHistoryItemPress(term)}
+        />
+      )}
 
       {/* Footer fijo */}
       <View style={styles.footer}>

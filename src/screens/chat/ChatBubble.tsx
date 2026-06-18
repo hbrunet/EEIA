@@ -13,9 +13,10 @@ type Props = {
   onChangeSpeechRate: (rate: SpeechRate) => void;
   onToggleCorrection: (id: string) => void;
   onLookup?: (term: string) => void;
+  onWordPress?: (word: string) => void;
 };
 
-export function ChatBubble({ item, speakingMessageId, speechRate, level, onSpeak, onChangeSpeechRate, onToggleCorrection, onLookup }: Props) {
+export function ChatBubble({ item, speakingMessageId, speechRate, level, onSpeak, onChangeSpeechRate, onToggleCorrection, onLookup, onWordPress }: Props) {
   return (
     <View style={[styles.bubble, item.role === "assistant" ? styles.assistantBubble : styles.userBubble]}>
       {item.role === "assistant" ? (
@@ -26,6 +27,7 @@ export function ChatBubble({ item, speakingMessageId, speechRate, level, onSpeak
             level={level}
             skipWord={isLikelySpanish}
             onLookup={onLookup}
+            onWordPress={onWordPress}
             resetKey={item.id}
           />
           <View style={styles.listenMessageRow}>

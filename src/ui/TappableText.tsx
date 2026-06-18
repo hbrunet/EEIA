@@ -22,6 +22,11 @@ type Props = {
   skipWord?: (word: string) => boolean;
   /** Called after a word is successfully looked up (useful for recording lookup history). */
   onLookup?: (term: string) => void;
+  /**
+   * When provided, word taps call this callback instead of showing the inline lookup card.
+   * Useful when the parent wants to handle lookup in a custom panel (e.g. ChatScreen).
+   */
+  onWordPress?: (word: string) => void;
 };
 
 /**
@@ -32,15 +37,20 @@ type Props = {
  * Usage:
  *   <TappableText text={question} style={styles.heading} level="B1" resetKey={idx} />
  */
-export function TappableText({ text, style, level, resetKey, skipWord, onLookup }: Props) {
+export function TappableText({ text, style, level, resetKey, skipWord, onLookup, onWordPress }: Props) {
   const [lookupWord, setLookupWord] = useState<string | null>(null);
   const [lookupResult, setLookupResult] = useState<TutorLookupResponse | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
-  async function onWordPress(raw: string) {
+  async function onWordPressInternal(raw: string) {
     const word = raw.replace(/[^a-zA-Z'-]/g, "").toLowerCase();
     if (!word || word.length < 2) return;
+    // If parent provides its own handler, delegate and skip inline card
+    if (onWordPress) {
+      onWordPress(word);
+      return;
+    }
     // Toggle: tap same word again to close
     if (word === lookupWord) {
       setLookupWord(null);
@@ -85,7 +95,7 @@ export function TappableText({ text, style, level, resetKey, skipWord, onLookup 
             <Text
               key={i}
               style={isActive ? styles.wordActive : styles.word}
-              onPress={() => onWordPress(chunk)}
+              onPress={() => onWordPressInternal(chunk)}
             >
               {chunk}
             </Text>
@@ -93,7 +103,8 @@ export function TappableText({ text, style, level, resetKey, skipWord, onLookup 
         })}
       </Text>
 
-      {lookupWord && (
+      {/* Only show inline card when using internal lookup (no onWordPress override) */}
+      {!onWordPress && lookupWord && (
         <LookupPanel
           mode="inline"
           word={lookupWord}
