@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View 
 import { fetchExercises } from "../services/api/client";
 import { Exercise } from "../types/progress";
 import { useAppState } from "../state/AppContext";
+import { TappableText } from "../ui/TappableText";
 import { styles } from "./LessonsScreen.styles";
 
 const SKILL_LABELS: Record<string, string> = {
@@ -167,9 +168,12 @@ export function LessonsScreen() {
           Ejercicio {exerciseIdx + 1} de {exercises.length}
         </Text>
 
-        <Text style={styles.exerciseQuestion}>
-          {ex.type === "multiple_choice" ? ex.question : ex.sentence.replace("___", "_____")}
-        </Text>
+        <TappableText
+          text={ex.type === "multiple_choice" ? ex.question : ex.sentence.replace("___", "_____")}
+          style={styles.exerciseQuestion}
+          level={progress?.profile?.level}
+          resetKey={exerciseIdx}
+        />
 
         {ex.type === "multiple_choice"
           ? ex.options.map((opt, i) => {
@@ -237,6 +241,7 @@ export function LessonsScreen() {
             </Pressable>
           </>
         )}
+
       </View>
     );
   }

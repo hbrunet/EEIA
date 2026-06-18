@@ -1,74 +1,33 @@
-import { Linking, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { TappableText } from "../../ui/TappableText";
 import { styles } from "../ChatScreen.styles";
 import { ChatMessage, SpeechRate, SPEECH_RATE_LABEL } from "./types";
-import { cleanLookupToken, isLikelySpanish } from "./utils";
-
-const URL_REGEX = /https?:\/\/[^\s)>\]"']+/;
-
-/** Split text into alternating non-URL / URL segments */
-function splitWithUrls(text: string): Array<{ type: "text" | "url"; value: string }> {
-  const parts: Array<{ type: "text" | "url"; value: string }> = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    const match = remaining.match(URL_REGEX);
-    if (!match || match.index === undefined) {
-      parts.push({ type: "text", value: remaining });
-      break;
-    }
-    if (match.index > 0) {
-      parts.push({ type: "text", value: remaining.slice(0, match.index) });
-    }
-    parts.push({ type: "url", value: match[0] });
-    remaining = remaining.slice(match.index + match[0].length);
-  }
-  return parts;
-}
+import { isLikelySpanish } from "./utils";
 
 type Props = {
   item: ChatMessage;
   speakingMessageId: string | null;
   speechRate: SpeechRate;
+  level?: string;
   onSpeak: (id: string, text: string) => void;
   onChangeSpeechRate: (rate: SpeechRate) => void;
   onToggleCorrection: (id: string) => void;
-  onWordPress: (word: string) => void;
+  onLookup?: (term: string) => void;
 };
 
-export function ChatBubble({ item, speakingMessageId, speechRate, onSpeak, onChangeSpeechRate, onToggleCorrection, onWordPress }: Props) {
+export function ChatBubble({ item, speakingMessageId, speechRate, level, onSpeak, onChangeSpeechRate, onToggleCorrection, onLookup }: Props) {
   return (
     <View style={[styles.bubble, item.role === "assistant" ? styles.assistantBubble : styles.userBubble]}>
       {item.role === "assistant" ? (
         <>
-          <Text style={styles.bubbleText}>
-            {splitWithUrls(item.text).map((segment, si) => {
-              if (segment.type === "url") {
-                return (
-                  <Text
-                    key={`${item.id}-url-${si}`}
-                    style={styles.linkText}
-                    onPress={() => Linking.openURL(segment.value)}
-                  >
-                    {segment.value}
-                  </Text>
-                );
-              }
-              return segment.value.split(/(\s+)/).map((part, wi) => {
-                const cleaned = cleanLookupToken(part);
-                if (!cleaned || isLikelySpanish(cleaned)) {
-                  return <Text key={`${item.id}-${si}-${wi}`}>{part}</Text>;
-                }
-                return (
-                  <Text
-                    key={`${item.id}-${si}-${wi}`}
-                    style={styles.lookupInlineWord}
-                    onPress={() => onWordPress(part)}
-                  >
-                    {part}
-                  </Text>
-                );
-              });
-            })}
-          </Text>
+          <TappableText
+            text={item.text}
+            style={styles.bubbleText}
+            level={level}
+            skipWord={isLikelySpanish}
+            onLookup={onLookup}
+            resetKey={item.id}
+          />
           <View style={styles.listenMessageRow}>
             <Pressable
               style={[styles.listenMessageBtn, speakingMessageId === item.id && styles.listenMessageBtnActive]}

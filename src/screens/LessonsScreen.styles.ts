@@ -303,4 +303,5 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 8,
   },
+
 });
