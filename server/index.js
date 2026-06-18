@@ -1463,6 +1463,100 @@ app.post("/tutor/exercises", async (req, res) => {
   }
 });
 
+// ─── Listening comprehension exercises ────────────────────────────────────────
+
+const LISTENING_FALLBACK = {
+  A1: [
+    { type: "listening_comprehension", passage: "Tom has a dog. The dog is big and brown. Tom plays with his dog every day.", question: "What color is Tom's dog?", options: ["White", "Black", "Brown", "Yellow"], correctIndex: 2, explanation: "El pasaje dice 'big and brown' — escucha los adjetivos después del verbo 'is'.", topic: "adjectives / present simple" },
+    { type: "listening_comprehension", passage: "Lisa is at the supermarket. She needs milk, bread and eggs. She pays at the cashier.", question: "Where is Lisa?", options: ["At school", "At the supermarket", "At home", "At the park"], correctIndex: 1, explanation: "El pasaje dice 'Lisa is at the supermarket'. Presta atención a la preposición 'at' para ubicaciones.", topic: "present simple / locations" },
+  ],
+  A2: [
+    { type: "listening_comprehension", passage: "Maria wakes up at seven every morning. She drinks coffee and reads the news before going to work. She works in a hospital as a nurse.", question: "What does Maria do before going to work?", options: ["She exercises and showers.", "She drinks coffee and reads the news.", "She calls her family.", "She cooks breakfast."], correctIndex: 1, explanation: "'Before going to work' indica lo que hace antes de salir. Escucha los verbos en presente simple.", topic: "present simple / daily routines" },
+    { type: "listening_comprehension", passage: "Last weekend, David visited his grandmother. They cooked a big meal together and watched an old movie. David drove back home late at night.", question: "What did David and his grandmother do together?", options: ["They went shopping.", "They cooked and watched a movie.", "They played cards.", "They cleaned the house."], correctIndex: 1, explanation: "El pasaje usa pasado simple: 'cooked' y 'watched'. Escucha los verbos terminados en -ed.", topic: "past simple / weekend activities" },
+  ],
+  B1: [
+    { type: "listening_comprehension", passage: "The company has recently launched a new product that uses recycled materials. Since January, sales have increased by twenty percent. The CEO said that the team has worked very hard to achieve this result.", question: "How much have sales increased since January?", options: ["Ten percent", "Thirty percent", "Twenty percent", "Fifty percent"], correctIndex: 2, explanation: "El pasaje usa Present Perfect ('have increased') con 'since' para indicar un cambio desde un punto en el tiempo.", topic: "present perfect / business context" },
+    { type: "listening_comprehension", passage: "If you want to improve your English, you should practice every day. Listening to podcasts and reading articles are two effective methods. Even fifteen minutes a day can make a big difference over time.", question: "According to the passage, how long should you practice each day to see results?", options: ["One hour minimum", "At least thirty minutes", "Even fifteen minutes can help", "Two hours"], correctIndex: 2, explanation: "El pasaje dice 'Even fifteen minutes a day can make a big difference'. Escucha los modificadores como 'even'.", topic: "conditionals / advice / learning tips" },
+  ],
+};
+
+app.post("/tutor/listening-exercise", async (req, res) => {
+  try {
+    const level = String(req.body?.level || "A2").trim().toUpperCase();
+    const objective = String(req.body?.objective || "").trim();
+    const weaknesses = Array.isArray(req.body?.weaknesses)
+      ? req.body.weaknesses.map((w) => String(w)).filter(Boolean).slice(0, 3)
+      : [];
+    const count = Math.min(Math.max(Number(req.body?.count) || 3, 2), 5);
+    const recentTopics = Array.isArray(req.body?.recentTopics)
+      ? req.body.recentTopics.map((t) => String(t)).filter(Boolean).slice(0, 20)
+      : [];
+
+    const fallbackKey = ["A1", "A2", "B1"].includes(level) ? level : "A2";
+    const fallback = LISTENING_FALLBACK[fallbackKey].slice(0, count);
+
+    if (!groq) return res.json({ exercises: fallback, source: "fallback" });
+
+    const systemPrompt =
+      "## ROLE\n" +
+      "You are an English listening comprehension exercise generator for Spanish-speaking learners.\n\n" +
+      "## TASK\n" +
+      "Generate short listening comprehension exercises. Each exercise has a brief passage (2-4 natural English sentences) and one multiple-choice question about it.\n" +
+      "The passage should sound like natural spoken English — not overly formal.\n" +
+      "The question must be answerable only by listening carefully (not guessable from general knowledge).\n\n" +
+      "## FORMAT\n" +
+      "Respond ONLY as JSON with key: exercises (array of objects).\n" +
+      "Schema: { type: 'listening_comprehension', passage: string, question: string, options: string[4], correctIndex: number, explanation: string, topic: string }\n" +
+      "- ALL fields (passage, question, options) in ENGLISH.\n" +
+      "- 'explanation' in SPANISH: 1-2 sentences explaining what to listen for / the grammar/vocab focus.\n" +
+      "- 'topic' in English: brief grammar/skill label (e.g. 'past simple / daily routines').";
+
+    const userPrompt =
+      `Student CEFR level: ${level}\n` +
+      (objective ? `Lesson objective: "${objective}"\n` : "") +
+      (weaknesses.length > 0 ? `Weak areas: ${weaknesses.join(", ")}\n` : "") +
+      (recentTopics.length > 0 ? `Avoid repeating these topics: ${recentTopics.join(", ")}\n` : "") +
+      `Generate exactly ${count} listening_comprehension exercises. Vary topics and contexts across them.\n` +
+      `Each passage: 2-4 sentences. Each question: 4 options (exactly one correct). Make distractors plausible.`;
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+
+      const raw = completion.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { return res.json({ exercises: fallback, source: "fallback" }); }
+
+      const exercises = Array.isArray(parsed.exercises)
+        ? parsed.exercises.filter((ex) =>
+            ex.type === "listening_comprehension" &&
+            typeof ex.passage === "string" && ex.passage.length > 10 &&
+            typeof ex.question === "string" &&
+            Array.isArray(ex.options) && ex.options.length === 4 &&
+            typeof ex.correctIndex === "number" &&
+            typeof ex.explanation === "string"
+          ).slice(0, count)
+        : [];
+
+      if (exercises.length < 1) return res.json({ exercises: fallback, source: "fallback" });
+      return res.json({ exercises, source: "groq" });
+    } catch (groqErr) {
+      console.error("Listening exercise generation failed, using fallback", groqErr);
+      return res.json({ exercises: fallback, source: "fallback" });
+    }
+  } catch (error) {
+    console.error("Listening exercise endpoint error", error);
+    return res.status(500).json({ error: "listening_exercise_failed" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Tutor API running on http://localhost:${port}`);
   console.log(`Provider: Groq | Model: ${model} | API key loaded: ${Boolean(apiKey)}`);

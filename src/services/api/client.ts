@@ -352,3 +352,20 @@ export async function fetchExercises(
     body: JSON.stringify(payload),
   });
 }
+
+export type FetchListeningExercisesPayload = {
+  level: string;
+  objective?: string;
+  weaknesses?: string[];
+  count?: number;
+  recentTopics?: string[];
+};
+
+export async function fetchListeningExercises(
+  payload: FetchListeningExercisesPayload,
+): Promise<{ exercises: Exercise[]; source: "groq" | "fallback" }> {
+  return apiRequest<{ exercises: Exercise[]; source: "groq" | "fallback" }>("/tutor/listening-exercise", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

@@ -19,7 +19,18 @@ export type FillBlankExercise = {
   topic?: string;
 };
 
-export type Exercise = MultipleChoiceExercise | FillBlankExercise;
+export type ListeningComprehensionExercise = {
+  type: "listening_comprehension";
+  /** Short passage (2-4 sentences) read aloud via TTS — hidden from user until after answering. */
+  passage: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+  topic?: string;
+};
+
+export type Exercise = MultipleChoiceExercise | FillBlankExercise | ListeningComprehensionExercise;
 
 export type ExerciseSessionEntry = {
   completedAt: string;

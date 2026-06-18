@@ -1,7 +1,8 @@
 import { useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { fetchExercises } from "../services/api/client";
+import * as Speech from "expo-speech";
+import { fetchExercises, fetchListeningExercises } from "../services/api/client";
 import { Exercise } from "../types/progress";
 import { useAppState } from "../state/AppContext";
 import { TappableText } from "../ui/TappableText";
@@ -35,6 +36,8 @@ export function LessonsScreen() {
   const [submitted, setSubmitted] = useState(false);
   const [exerciseResults, setExerciseResults] = useState<boolean[]>([]);
   const [exerciseError, setExerciseError] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hasPlayed, setHasPlayed] = useState(false);
 
   const progressPct =
     exercisePhase === "done"
@@ -50,7 +53,10 @@ export function LessonsScreen() {
     try {
       const storedRaw = await AsyncStorage.getItem(RECENT_TOPICS_KEY).catch(() => null);
       const recentTopics: string[] = storedRaw ? JSON.parse(storedRaw) : [];
-      const result = await fetchExercises({
+
+      const isListening = lesson.focusArea === "listening";
+      const fetchFn = isListening ? fetchListeningExercises : fetchExercises;
+      const result = await fetchFn({
         level: progress?.profile?.level ?? "A2",
         focusArea: lesson.focusArea,
         objective: lesson.objective,
@@ -76,7 +82,7 @@ export function LessonsScreen() {
     setSubmitted(true);
     const ex = exercises[exerciseIdx];
     let isCorrect = false;
-    if (ex.type === "multiple_choice") {
+    if (ex.type === "multiple_choice" || ex.type === "listening_comprehension") {
       isCorrect = selectedOption === ex.correctIndex;
     } else {
       isCorrect = fillAnswer.trim().toLowerCase() === ex.correctAnswer.trim().toLowerCase();
@@ -85,6 +91,7 @@ export function LessonsScreen() {
   }
 
   function onNextExercise() {
+    Speech.stop();
     if (exerciseIdx + 1 >= exercises.length) {
       setExercisePhase("done");
     } else {
@@ -92,6 +99,8 @@ export function LessonsScreen() {
       setSelectedOption(null);
       setFillAnswer("");
       setSubmitted(false);
+      setIsPlaying(false);
+      setHasPlayed(false);
     }
   }
 
@@ -130,6 +139,7 @@ export function LessonsScreen() {
   }
 
   function onReset() {
+    Speech.stop();
     setExercisePhase("idle");
     setExercises([]);
     setExerciseIdx(0);
@@ -139,6 +149,8 @@ export function LessonsScreen() {
     setSubmitted(false);
     setExerciseError(null);
     setCompleted(false);
+    setIsPlaying(false);
+    setHasPlayed(false);
   }
 
   if (!lesson) {
@@ -154,6 +166,102 @@ export function LessonsScreen() {
     const ex = exercises[exerciseIdx];
     if (!ex) return null;
 
+    // ── Listening comprehension ───────────────────────────────────────────────
+    if (ex.type === "listening_comprehension") {
+      const listenEx = ex;
+      const isCorrectAnswer = selectedOption === listenEx.correctIndex;
+      const canSubmit = hasPlayed && selectedOption !== null;
+
+      function playPassage() {
+        setIsPlaying(true);
+        Speech.speak(listenEx.passage, {
+          language: "en-US",
+          rate: 0.85,
+          onDone: () => { setIsPlaying(false); setHasPlayed(true); },
+          onError: () => { setIsPlaying(false); setHasPlayed(true); },
+        });
+      }
+
+      return (
+        <View style={styles.card}>
+          <Text style={styles.exerciseCounter}>
+            Ejercicio {exerciseIdx + 1} de {exercises.length}
+          </Text>
+
+          {/* Audio player */}
+          <View style={{ alignItems: "center", marginVertical: 12 }}>
+            <Pressable
+              style={[styles.exerciseStartBtn, isPlaying && styles.buttonDisabled]}
+              onPress={playPassage}
+              disabled={isPlaying}
+            >
+              <Text style={styles.buttonText}>
+                {isPlaying ? "Reproduciendo..." : hasPlayed ? "Escuchar de nuevo" : "▶  Escuchar"}
+              </Text>
+            </Pressable>
+            {!hasPlayed && (
+              <Text style={{ color: "#888", fontSize: 12, marginTop: 6 }}>
+                Escucha el audio antes de responder
+              </Text>
+            )}
+          </View>
+
+          {/* Passage revealed after answering */}
+          {submitted && (
+            <View style={{ backgroundColor: "#f0f4ff", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+              <Text style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>Texto completo:</Text>
+              <Text style={{ fontSize: 14, color: "#222", fontStyle: "italic" }}>{listenEx.passage}</Text>
+            </View>
+          )}
+
+          <Text style={styles.exerciseQuestion}>{listenEx.question}</Text>
+
+          {listenEx.options.map((opt, i) => {
+            const isSelected = i === selectedOption;
+            const isCorrectOpt = i === listenEx.correctIndex;
+            const extraStyle = submitted
+              ? isCorrectOpt ? styles.optionBtnCorrect : isSelected ? styles.optionBtnWrong : undefined
+              : isSelected ? styles.optionBtnSelected : undefined;
+            return (
+              <Pressable
+                key={i}
+                style={[styles.optionBtn, extraStyle]}
+                onPress={() => !submitted && hasPlayed && setSelectedOption(i)}
+                disabled={submitted || !hasPlayed}
+              >
+                <Text style={styles.optionBtnText}>{opt}</Text>
+              </Pressable>
+            );
+          })}
+
+          {!submitted ? (
+            <Pressable
+              style={[styles.submitBtn, !canSubmit && styles.buttonDisabled]}
+              onPress={onSubmitExercise}
+              disabled={!canSubmit}
+            >
+              <Text style={styles.buttonText}>Verificar</Text>
+            </Pressable>
+          ) : (
+            <>
+              <View style={[styles.feedbackBox, isCorrectAnswer ? styles.feedbackCorrect : styles.feedbackWrong]}>
+                <Text style={styles.feedbackText}>
+                  {isCorrectAnswer ? "✅ ¡Correcto!" : `❌ Respuesta: "${listenEx.options[listenEx.correctIndex]}"`}
+                </Text>
+                <Text style={styles.feedbackExplanation}>{listenEx.explanation}</Text>
+              </View>
+              <Pressable style={styles.nextBtn} onPress={onNextExercise}>
+                <Text style={styles.buttonText}>
+                  {exerciseIdx + 1 >= exercises.length ? "Ver resultado" : "Siguiente →"}
+                </Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      );
+    }
+
+    // ── Grammar / fill_blank / multiple_choice ────────────────────────────────
     const isCorrectAnswer =
       ex.type === "multiple_choice"
         ? selectedOption === ex.correctIndex
