@@ -38,6 +38,9 @@ export function LessonsScreen() {
   const [exerciseError, setExerciseError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [hasPlayed, setHasPlayed] = useState(false);
+  const [focusOverride, setFocusOverride] = useState<string | null>(null);
+
+  const activeFocusArea = focusOverride ?? lesson?.focusArea ?? "grammar";
 
   const progressPct =
     exercisePhase === "done"
@@ -54,11 +57,11 @@ export function LessonsScreen() {
       const storedRaw = await AsyncStorage.getItem(RECENT_TOPICS_KEY).catch(() => null);
       const recentTopics: string[] = storedRaw ? JSON.parse(storedRaw) : [];
 
-      const isListening = lesson.focusArea === "listening";
+      const isListening = activeFocusArea === "listening";
       const fetchFn = isListening ? fetchListeningExercises : fetchExercises;
       const result = await fetchFn({
         level: progress?.profile?.level ?? "A2",
-        focusArea: lesson.focusArea,
+        focusArea: activeFocusArea,
         objective: lesson.objective,
         weaknesses: progress?.weaknesses?.slice(0, 3).map((w) => w.detail) ?? [],
         count: 5,
@@ -151,6 +154,7 @@ export function LessonsScreen() {
     setCompleted(false);
     setIsPlaying(false);
     setHasPlayed(false);
+    setFocusOverride(null);
   }
 
   if (!lesson) {
@@ -361,9 +365,9 @@ export function LessonsScreen() {
       <View style={styles.card}>
         <Text style={styles.objective}>{lesson.objective}</Text>
         <View style={styles.badges}>
-          <View style={styles.badge}>
+          <View style={[styles.badge, focusOverride ? styles.badgeAccent : undefined]}>
             <Text style={styles.badgeText}>
-              {SKILL_LABELS[lesson.focusArea] ?? lesson.focusArea}
+              {SKILL_LABELS[activeFocusArea] ?? activeFocusArea}
             </Text>
           </View>
           <View style={[styles.badge, styles.badgeAccent]}>
@@ -372,6 +376,36 @@ export function LessonsScreen() {
             </Text>
           </View>
         </View>
+
+        {/* Area picker — only visible before starting */}
+        {exercisePhase === "idle" && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>Cambiar área:</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {(Object.entries(SKILL_LABELS) as [string, string][]).map(([key, label]) => {
+                const isActive = activeFocusArea === key;
+                return (
+                  <Pressable
+                    key={key}
+                    onPress={() => setFocusOverride(key === lesson.focusArea ? null : key)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 20,
+                      backgroundColor: isActive ? "#4f46e5" : "#f0f0f0",
+                      borderWidth: 1,
+                      borderColor: isActive ? "#4f46e5" : "#ddd",
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, color: isActive ? "#fff" : "#444", fontWeight: isActive ? "600" : "400" }}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Barra de progreso */}
